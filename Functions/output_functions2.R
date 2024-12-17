@@ -81,12 +81,6 @@ fun.pre <- function(dt,w,y,pre_pop = pre_pop,
   return((temp))
 }
 
-fun.ee <- function(dt,w,y,pre_all){
-  y <- as.numeric(y)
-  temp <- sum(w*y*dt)
-  temp2 <- sweep(dt,2,pre_all,"*")
-  temp2 <- sum(w*temp2)
-  return(temp -temp2)
 }
 
 
