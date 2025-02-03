@@ -56,7 +56,7 @@ transform_term_aou <- function(term) {
 fun.vs <- function(cat_temp,dt_aou,dt_s){
   m_aou <- model.matrix(cat_temp , dt_aou)
   m_s <- model.matrix(cat_temp, dt_s)
-  theta <- rep(1,dim(m_aou)[2])
+  theta <- rep(0,dim(m_aou)[2])
   pia <- rep(1/2,dim(dt_s)[1])
   U1 <- colSums(m_aou) 
   res <- 1
