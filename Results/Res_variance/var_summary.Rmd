@@ -1,0 +1,463 @@
+---
+title: "Oracle Summary"
+author: "Huiding Chen"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: "hide"
+---
+
+```{r,include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(cat)
+library(survey)
+library(cowplot)
+library(kableExtra)
+library(VGAM)
+library(distributionsrd)
+library(ggplot2)
+library(truncnorm)
+library(reshape2)
+library(paletteer)
+library(plotly)
+library(stringr)
+library(purrr)
+library(RVAideMemoire)
+library(glmnet)
+library(DT)
+knitr::opts_chunk$set(warning = FALSE,message = FALSE)
+```
+
+```{r}
+# Load i=1 separately (different filename)
+filenames <- c( paste0("S3_full_summary_", 1:6))
+
+out_mean_list <- lapply(filenames, function(nm) {
+  out <- readRDS(paste0(nm, ".RData"))
+  out$out_mean
+})
+
+names(out_mean_list) <- filenames
+```
+
+```{r}
+methods_keep <- c( "trueweight", "ps_vs_stepwise_twoway_rake", "svy_oneway_rake",
+                   "oracle_rails")
+
+out_mean_df <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method %in% methods_keep, ]
+}))
+
+out_mean_df <- out_mean_df %>%
+  mutate(method = recode(method, 
+                         "ps_vs_stepwise_twoway_rake" = "RAILS",
+                         "trueweight" = "Trueweight",
+                         "svy_oneway_rake" = "Cal_1",
+                         "oracle_rails" = "True_RAILS")) %>%
+  rename(`Nominal Coverage` = TrueCoverage)
+
+rownames(out_mean_df) <- NULL
+
+out_mean_df <- out_mean_df %>% 
+  select(method, scenario, everything())
+
+size_labels <- sapply(filenames, function(nm) {
+  out <- readRDS(paste0(nm, ".RData"))
+  sum(out$out_size)
+})
+size_labels_fmt <- paste0(round(size_labels / 1000), "k")
+size_labels_fmt <- rev(size_labels_fmt)
+```
+
+
+
+```{r}
+# Extract rails_varcor coverage for each scenario
+varcor_rows <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method = "RAILS_Stacked",
+    scenario = i,
+    `Nominal Coverage` = out$out_varcor["cover_full_temp"],
+    `Oracle Coverage` = out$out_varcor_cov[3],
+    check.names = FALSE
+  )
+}))
+
+varcor_rows_2 <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method = "Cal_1_Stacked",
+    scenario = i,
+    `Nominal Coverage` = out$out_varcor_svy["cover_full_temp"],
+    `Oracle Coverage` = out$out_varcor_cov[2],
+    check.names = FALSE
+  )
+}))
+
+varcor_rows_3 <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method = "True_RAILS_Stacked",
+    scenario = i,
+    `Nominal Coverage` = out$out_varcor_oracle["cover_full_temp"],
+    `Oracle Coverage` = out$out_varcor_cov[4],
+    check.names = FALSE
+  )
+}))
+
+varcor_rows_4 <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method             = "Cal_1_Survey",
+    scenario           = i,
+    `Nominal Coverage` = out$out_varcor_svy["cover_naive_temp"],
+    `Oracle Coverage`  = out$out_varcor_cov["svy_one_rake_survey"],
+    check.names        = FALSE
+  )
+}))
+
+# Method display order for legend
+p1_method_levels <- c(
+  "RAILS", "RAILS_Stacked",
+  "True_RAILS", "True_RAILS_Stacked",
+  "Cal_1", "Cal_1_Stacked",
+  "Trueweight"
+)
+
+# Color: same method family shares a color
+# RAILS family = red, True_RAILS family = blue, Cal_1 family = green, Trueweight = purple
+p1_color <- c(
+  "RAILS"              = "#E41A1C",
+  "RAILS_Stacked"      = "#E41A1C",
+  "True_RAILS"         = "#377EB8",
+  "True_RAILS_Stacked" = "#377EB8",
+  "Cal_1"              = "#4DAF4A",
+  "Cal_1_Stacked"      = "#4DAF4A",
+  "Trueweight"         = "#984EA3"
+)
+
+# Linetype & shape: same estimator type shares the same style
+# Naive/simple = solid + circle, Stacked = dashed + triangle
+p1_lty <- c(
+  "RAILS"              = "solid",
+  "RAILS_Stacked"      = "dashed",
+  "True_RAILS"         = "solid",
+  "True_RAILS_Stacked" = "dashed",
+  "Cal_1"              = "solid",
+  "Cal_1_Stacked"      = "dashed",
+  "Trueweight"         = "solid"
+)
+
+p1_shape <- c(
+  "RAILS"              = 16,
+  "RAILS_Stacked"      = 17,
+  "True_RAILS"         = 16,
+  "True_RAILS_Stacked" = 17,
+  "Cal_1"              = 16,
+  "Cal_1_Stacked"      = 17,
+  "Trueweight"         = 16
+)
+
+p1_df <- bind_rows(out_mean_df, varcor_rows, varcor_rows_2, varcor_rows_3) %>%
+  mutate(method = recode(method,
+                         "ps_vs_stepwise_twoway_rake" = "rails"),
+         method   = factor(method, levels = p1_method_levels),
+         scenario = factor(scenario, levels = 6:1)) %>%
+  pivot_longer(cols = c(`Nominal Coverage`, `Oracle Coverage`),
+               names_to  = "coverage_type",
+               values_to = "coverage")
+
+p1 <- ggplot(p1_df,
+             aes(x        = scenario,
+                 y        = coverage,
+                 color    = method,
+                 linetype = method,
+                 shape    = method,
+                 group    = method)) +
+  geom_line() +
+  geom_point(size = 2) +
+  facet_wrap(~ coverage_type) +
+  scale_x_discrete(labels = size_labels_fmt) +
+  scale_color_manual(values = p1_color,    name = "Method",
+                     breaks = p1_method_levels, drop = FALSE) +
+  scale_linetype_manual(values = p1_lty,   name = "Method",
+                        breaks = p1_method_levels, drop = FALSE) +
+  scale_shape_manual(values = p1_shape,    name = "Method",
+                     breaks = p1_method_levels, drop = FALSE) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "black") +
+  labs(x = "Sample Size", y = "Coverage") +
+  theme_bw() +
+  theme(
+    legend.position  = "bottom",
+    legend.key.width = unit(1, "cm")
+  ) +
+  guides(
+    color    = guide_legend(order = 1, nrow = 2, byrow = FALSE,
+                            override.aes = list(linewidth = 1)),
+    linetype = guide_legend(order = 1, nrow = 2, byrow = FALSE),
+    shape    = guide_legend(order = 1, nrow = 2, byrow = FALSE)
+  )
+
+ggplotly(p1)
+```
+
+```{r}
+p2 <- out_mean_df %>%
+  filter(method %in% c("True_RAILS", "RAILS")) %>%
+  mutate(scenario = factor(scenario, levels = 6:1)) %>%
+  pivot_longer(cols = c(`Nominal Coverage`, SvyCov),
+               names_to = "coverage_type",
+               values_to = "coverage") %>%
+  ggplot(aes(x = scenario, y = coverage, color = method, group = method)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ coverage_type) +
+  scale_x_discrete(labels = size_labels_fmt) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "black") +
+  labs(x = "Sample Size", y = "Coverage", color = "Method") +
+  theme_bw()
+
+ggplotly(p2)
+```
+
+```{r}
+# Extract CI data from out_mean_list
+ci_df <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method %in% methods_keep, c("method", "scenario", "mean", "Emp SD")]
+})) %>%
+  mutate(method = recode(method, 
+                         "ps_vs_stepwise_twoway_rake" = "RAILS",
+                         "trueweight" = "Trueweight",
+                         "svy_oneway_rake" = "Cal_1",
+                         "oracle_rails" = "True_RAILS"),
+         ci_lower = mean - 1.96 * `Emp SD`,
+         ci_upper = mean + 1.96 * `Emp SD`)
+
+# Extract true value from trueweight (constant across scenarios)
+true_value <- ci_df %>% 
+  filter(method == "Trueweight") %>% 
+  pull(mean) %>% 
+  mean()
+
+varcor_ci_rows <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method = "RAILS_Varcor",
+    scenario = i,
+    mean = out$out_varcor["mu_hat"],
+    `Emp SD` = out$out_varcor_empsd,
+    check.names = FALSE
+  )
+})) %>%
+  mutate(ci_lower = mean - 1.96 * `Emp SD`,
+         ci_upper = mean + 1.96 * `Emp SD`)
+
+# Bind with existing ci_df and plot
+p3 <- bind_rows(ci_df, varcor_ci_rows) %>%
+  mutate(scenario = factor(scenario, levels = 6:1)) %>%
+  filter(method != "Trueweight") %>%
+  ggplot(aes(x = scenario, y = mean, group = method, color = method)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.3) +
+  geom_hline(yintercept = true_value, linetype = "dashed", color = "black") +
+  facet_wrap(~ method) +
+  labs(x = "Sample Size", y = "Mean", color = "Method",
+       caption = "Dashed line = true value (trueweight)",
+       title = "Confidence interval with Empirical SD") +
+  theme_bw() +
+  scale_x_discrete(labels = size_labels_fmt) 
+ggplotly(p3)
+```
+```{r}
+# Extract CI data from out_mean_list
+ci_df <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method %in% methods_keep, c("method", "scenario", "mean", "Avg SD")]
+})) %>%
+  mutate(method = recode(method, 
+                         "ps_vs_stepwise_twoway_rake" = "RAILS",
+                         "trueweight" = "Trueweight",
+                         "oracle_rails" = "True_RAILS",
+                         "svy_oneway_rake" = "Cal_1") ,
+         ci_lower = mean - 1.96 * `Avg SD`,
+         ci_upper = mean + 1.96 * `Avg SD`)
+
+# Extract true value from trueweight (constant across scenarios)
+true_value <- ci_df %>% 
+  filter(method == "Trueweight") %>% 
+  pull(mean) %>% 
+  mean()
+
+varcor_ci_rows <- do.call(rbind, lapply(seq_along(filenames), function(i) {
+  out <- readRDS(paste0(filenames[i], ".RData"))
+  data.frame(
+    method = "RAILS_Varcor",
+    scenario = i,
+    mean = out$out_varcor["mu_hat"],
+    `Avg SD` = out$out_varcor["se_full"],
+    check.names = FALSE
+  )
+})) %>%
+  mutate(ci_lower = mean - 1.96 * `Avg SD`,
+         ci_upper = mean + 1.96 * `Avg SD`)
+
+# Bind with existing ci_df and plot
+p4 <- bind_rows(ci_df, varcor_ci_rows) %>%
+  filter(method != "Trueweight") %>%
+  mutate(scenario = factor(scenario, levels = 6:1)) %>%
+  ggplot(aes(x = scenario, y = mean, group = method, color = method)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.3) +
+  geom_hline(yintercept = true_value, linetype = "dashed", color = "black") +
+  facet_wrap(~ method) +
+  labs(x = "Sample Size", y = "Mean", color = "Method",
+       caption = "Dashed line = true value (trueweight)",
+       title = "Confidence interval with Mean of Estimated SD") +
+  theme_bw() +
+  scale_x_discrete(labels = size_labels_fmt) 
+ggplotly(p4)
+```
+
+```{r}
+p1
+p2
+p3
+p4
+ggsave("Nominal-Oracle Coverage.png", plot = p1, dpi = 1200, width = 8, height = 5, units = "in")
+ggsave("CI Emp SD.png", plot = p3, dpi = 300, width = 8, height = 6, units = "in")
+ggsave("CI Avg SD.png", plot = p4, dpi = 300, width = 8, height = 6, units = "in")
+```
+
+
+```{r fig.width=12, fig.height=10}
+# ── Build CI data for each method and SD type ──
+
+# --- Original RAILS: Empirical, Simplified, Stacked ---
+ci_orig <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method == "ps_vs_stepwise_twoway_rake",
+     c("method", "scenario", "mean", "Emp SD", "Avg SD")]
+})) %>%
+  mutate(method = "Original_RAILS") %>%
+  left_join(
+    do.call(rbind, lapply(seq_along(filenames), function(i) {
+      out <- readRDS(paste0(filenames[i], ".RData"))
+      data.frame(scenario = i, se_stack = out$out_varcor["se_full"], check.names = FALSE)
+    })),
+    by = "scenario"
+  ) %>%
+  mutate(
+    emp_lower   = mean - 1.96 * `Emp SD`,  emp_upper   = mean + 1.96 * `Emp SD`,
+    naive_lower = mean - 1.96 * `Avg SD`,  naive_upper = mean + 1.96 * `Avg SD`,
+    stack_lower = mean - 1.96 * se_stack,  stack_upper = mean + 1.96 * se_stack
+  ) %>%
+  pivot_longer(
+    cols = c(emp_lower, emp_upper, naive_lower, naive_upper, stack_lower, stack_upper),
+    names_to = c("ci_type", ".value"), names_pattern = "(.*)_(lower|upper)"
+  ) %>%
+  mutate(ci_type = recode(ci_type,
+                          "emp" = "Empirical SD", "naive" = "Simplified SD", "stack" = "Stacked SD"))
+
+# --- Oracle RAILS: Empirical, Simplified, Stacked ---
+ci_oracle <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method == "oracle_rails",
+     c("method", "scenario", "mean", "Emp SD", "Avg SD")]
+})) %>%
+  mutate(method = "Oracle_RAILS") %>%
+  left_join(
+    do.call(rbind, lapply(seq_along(filenames), function(i) {
+      out <- readRDS(paste0(filenames[i], ".RData"))
+      data.frame(scenario = i, se_stack = out$out_varcor_oracle["se_full"], check.names = FALSE)
+    })),
+    by = "scenario"
+  ) %>%
+  mutate(
+    emp_lower   = mean - 1.96 * `Emp SD`,  emp_upper   = mean + 1.96 * `Emp SD`,
+    naive_lower = mean - 1.96 * `Avg SD`,  naive_upper = mean + 1.96 * `Avg SD`,
+    stack_lower = mean - 1.96 * se_stack,  stack_upper = mean + 1.96 * se_stack
+  ) %>%
+  pivot_longer(
+    cols = c(emp_lower, emp_upper, naive_lower, naive_upper, stack_lower, stack_upper),
+    names_to = c("ci_type", ".value"), names_pattern = "(.*)_(lower|upper)"
+  ) %>%
+  mutate(ci_type = recode(ci_type,
+                          "emp" = "Empirical SD", "naive" = "Simplified SD", "stack" = "Stacked SD"))
+
+# --- Cal_1: Empirical, Simplified, Stacked (Survey SD removed) ---
+ci_svy <- do.call(rbind, lapply(seq_along(out_mean_list), function(i) {
+  df <- out_mean_list[[i]]
+  df$method <- rownames(df)
+  df$scenario <- i
+  df[df$method == "svy_oneway_rake",
+     c("method", "scenario", "mean", "Emp SD", "Avg SD")]
+})) %>%
+  mutate(method = "Cal_1") %>%
+  left_join(
+    do.call(rbind, lapply(seq_along(filenames), function(i) {
+      out <- readRDS(paste0(filenames[i], ".RData"))
+      data.frame(scenario = i, se_stack = out$out_varcor_svy["se_full"], check.names = FALSE)
+    })),
+    by = "scenario"
+  ) %>%
+  mutate(
+    emp_lower   = mean - 1.96 * `Emp SD`,  emp_upper   = mean + 1.96 * `Emp SD`,
+    naive_lower = mean - 1.96 * `Avg SD`,  naive_upper = mean + 1.96 * `Avg SD`,
+    stack_lower = mean - 1.96 * se_stack,  stack_upper = mean + 1.96 * se_stack
+  ) %>%
+  pivot_longer(
+    cols = c(emp_lower, emp_upper, naive_lower, naive_upper,
+             stack_lower, stack_upper),
+    names_to = c("ci_type", ".value"), names_pattern = "(.*)_(lower|upper)"
+  ) %>%
+  mutate(ci_type = recode(ci_type,
+                          "emp" = "Empirical SD", "naive" = "Simplified SD",
+                          "stack" = "Stacked SD"))
+
+# ── Combine — no NAs, each method only carries its own CI types ──
+ci_all <- bind_rows(ci_orig, ci_oracle, ci_svy) %>%
+  mutate(
+    scenario = factor(scenario, levels = 6:1),
+    method   = factor(method, levels = c("Original_RAILS", "Oracle_RAILS", "Cal_1")),
+    ci_type  = factor(ci_type, levels = c("Empirical SD", "Simplified SD", "Stacked SD"))
+  )
+
+ci_colors <- c(
+  "Empirical SD"  = "#E41A1C",
+  "Simplified SD" = "#377EB8",
+  "Stacked SD"    = "#4DAF4A"
+)
+
+# ── Plot: dodged point + bar per CI type ──
+p_ci <- ggplot(ci_all, aes(x = scenario, y = mean, color = ci_type, group = ci_type)) +
+  geom_point(size = 2, position = position_dodge(width = 0.6)) +
+  geom_errorbar(aes(ymin = lower, ymax = upper),
+                width = 0.3, linewidth = 0.7,
+                position = position_dodge(width = 0.6)) +
+  geom_hline(yintercept = true_value, linetype = "dashed", color = "black") +
+  facet_grid(method ~ ., scales = "free_y") +
+  scale_x_discrete(labels = size_labels_fmt) +
+  scale_color_manual(values = ci_colors, drop = FALSE) +
+  labs(x = "Sample Size", y = "Mean Estimate", color = "CI Type",
+       title = "95% Confidence Intervals by Method and SD Type") +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        strip.text.y    = element_text(size = 11, face = "bold"))
+
+ggplotly(p_ci)
+```

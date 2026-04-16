@@ -1,0 +1,93 @@
+---
+title: "S3"
+author: "Huiding Chen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(cat)
+library(survey)
+library(kableExtra)
+library(VGAM)
+library(distributionsrd)
+library(ggplot2)
+library(truncnorm)
+library(reshape2)
+library(paletteer)
+library(plotly)
+library(stringr)
+library(purrr)
+library(RVAideMemoire)
+library(glmnet)
+knitr::opts_chunk$set(warning = FALSE,message = FALSE)
+```
+
+# Basic Setups
+
+
+## Simulation Parameters
+
+```{r}
+### Overall setup
+seed = 1226
+set.seed(seed)
+nsiz = 3.34e6
+nss  = 5.5e3
+naou = 3.5e4
+alpha <- c(1.1,-0.1,0.2,-0.5,-1,-1.5,
+           -1.5,1.6,
+           0,0,0,0)
+beta <- c(-2.8,-0.1,-1.0,-1.2,-2.4,-3.6,
+          0,0,
+          0,0,0,0)
+gamma <- c(-7,0.12,-0.4,0.3,0.6,0.9,
+           -0.2,0.4,
+           0.6,0.3,0.6,0.9)
+names_var <- c("catx1","catx2","catx3")
+true_model <- as.formula(paste0("~",paste0(c("catx1","catx2","catx3",
+                                             "catx1:catx2","catx2:catx3"),
+                                           collapse = "+")))
+```
+## Sample Function
+
+```{r}
+source("../../Functions/sample_functions.R")
+```
+
+## Output Function
+
+```{r}
+source("../../Functions/output_functions.R")
+```
+
+
+## Supplementary functions
+
+```{r}
+source("../../Functions/supplementary_functions.R")
+```
+
+## Simulation Function
+
+```{r}
+source("../../Functions/simfun.R")
+```
+
+
+# Running Simulation
+
+```{r}
+n = 1e3
+if(file.exists("../../Results/Res_variance/S3_4.RData")){
+  load("../../Results/Res_variance/S3_4.RData")
+}else{
+  sim_result <- lapply(1:n, function(seed) {
+    suppressWarnings(sim.fun(seed, nsiz, alpha, beta, gamma, names_var, true_model))
+  })
+  save.image("../../Results/Res_variance/S3_4.RData")
+}
+```

@@ -47,7 +47,9 @@ sample.function <- function(nsiz,alpha,beta,gamma,...){
   ## Preset Beta to determine the sampling probability for AoU pop
   ps <- expit(beta[1] + beta[2] * x1 + beta[3]*x2 + beta[4]*I(x3==1) +
                 beta[5]*I(x3==2) + beta[6]*I(x3==3) + beta[7]*x1*x2 + 
-                beta[8]*x2*I(x3))
+                beta[8]*x2*I(x3) + beta[9]*x4 + beta[10]*I(x5==1) +
+                beta[11]*I(x5==2) + beta[12]*I(x5==3)
+  )
   s <- rbinom(nsiz,size = 1, prob = ps)
   #sum(s)
   dt <- cbind(dt,s = s,ps = ps,fpc = nsiz)
@@ -61,6 +63,7 @@ sample.function <- function(nsiz,alpha,beta,gamma,...){
                   gamma[5]*I(x3==2) + gamma[6]*I(x3==3) + gamma[7]*x1*x2 + 
                   gamma[8]*x2*I(x3) + gamma[9]*x4 +  gamma[10]*I(x5==1) +
                   gamma[11]*I(x5==2) + gamma[12]*I(x5==3)
+                
   )
   aou <- rbinom(nsiz,size = 1, prob = paou)
   dt <- cbind(dt,aou = aou,paou)

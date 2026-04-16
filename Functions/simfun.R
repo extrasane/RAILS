@@ -1,194 +1,26 @@
----
-title: "Varaible Selection - Subgroup Distribution After Weighiting"
-author: "Huiding Chen"
-date: "`r Sys.Date()`"
-output: html_document
----
+##### Simulation Function v13
 
-```{r,include=FALSE}
-library(knitr)
-library(dplyr)
-library(tidyverse)
-library(cat)
-library(survey)
-library(kableExtra)
-library(VGAM)
-library(distributionsrd)
-library(ggplot2)
-library(truncnorm)
-library(reshape2)
-library(paletteer)
-library(plotly)
-library(stringr)
-library(purrr)
-library(RVAideMemoire)
-library(glmnet)
-knitr::opts_chunk$set(warning = FALSE,message = FALSE)
-```
+### Link function:
+### Logit for initial PS and logit for forward selection
+### Add QR for twoway
+### Add Estimating Equation residuals for each weight
+### Add Comparison wrt svymean variance
 
-# Basic Setups
+### Report Subgroup Prevalence & Variance
+### Simulation Function
 
-## Setup Description
-
-Sampling: Y\|X1,X2,X3, R \~ Uniform, AoU\| X1,X2,X3,X4,X5.
-
-Moreover, X4 is dependent on X5, with a probability of 0.15\*X5 to succeed.
-
-In this toy simulation, X1 plays the role of age, X2 for gender and X3 for income. X3 is not given in the dataset used to calculate the propensity score.
-
-Modifier:
-
--   $\sqrt{n_{aou}}$ for confidence intervals
--   Variance form for weighted mean: $$\frac{1}{N^2}\sum_{1}^{n}w_i(y_i - \bar{y}_w)^2$$
-
-Methods to include:
-- Unweight
-- Trueweight
-- One-way, Survey Calibration, linear & raking
-- Two-way (Univaraite + Two-way), Survey Calibration, linear & raking
-- Two-way (Univaraite + Two-way), Survey Calibration, use one-way raking if not convergent
-- One-way, Pseudo-likelihood-based Propensity Score Weighting; raw, linear and raking
-- Two-way, Pseudo-likelihood-based Propensity Score Weighting; raw, linear and raking
-- Two-way, Pseudo-likelihood-based Propensity Score Weighting, Variable Selection; raw, linear and raking
-- Two-way, Pseudo-likelihood-based Propensity Score Weighting, Variable Selection + Selection until convergent; raw, linear and raking
-
-
-## Simulation Parameters
-
-```{r}
-### Overall setup
-set.seed(123)
-nsiz = 3.34e6
-nss  = 5.5e3
-naou = 3.5e4
-alpha <- c(0.5,-0.1,0.2,-0.5,-1,-1.5,
-           -1,0.7,
-           -0.2,0.4,0.6,0.8)
-beta <- c(-4.8,-0.2,-1.5,-1.8,-2.5,-3.5,
-          0.3,-0.5,
-          -0.3,0.1,0.2,0.3)
-gamma <- c(-7,0.12,-0.4,0.3,0.6,0.9,
-           -0.2,0.4,
-           0.6,0.3,0.6,0.9)
-names_var <- c("catx1","catx2","catx3")
-```
-
-## Sample Function
-
-```{r}
-source("./Functions/sample_functions2.R")
-```
-
-## Output Function
-
-```{r}
-source("./Functions/output_functions2.R")
-```
-
-
-## Supplementary functions
-
-```{r}
-source("./Functions/supplementary_functions.R")
-```
-
-## Calculated Populational Prevalence
-
-```{r}
-subpre.function <- function(nsiz,alpha,beta,gamma,names_var,...){
-  ##### Population Setup #####
-  ##### US pop setup
-  ## age
-  x1 <- rnorm(nsiz, mean = 20, sd = 5)
-  # sum(x1>85)/nsiz
-  # sum(x1<20)/nsiz
-  # plot(density(x1))
-  catx1 <- (x1>= quantile(x1,probs = 0.3))*1 + (x1>= quantile(x1,probs = 0.75))*1
-  catx1 <- factor(catx1)
+sim.fun <- function(seed,nsiz,alpha,beta,gamma,names_var,true_model,...){
+  set.seed(seed)
   
-  ## Sex
-  x2 <- rbinom(nsiz,size = 1,prob = 0.65) #1 as female
-  catx2 <- factor(x2)
-  # sex <- factor(x2,labels = c("Male","Female"))
-  
-  ## Income in k
-  x3 <- rtruncpareto(nsiz, lower = 8,shape = 1,upper = 300)
-  qx3 <- quantile(x3,probs = c(0.1,0.5,0.9))
-  x3 <- (x3>=qx3[1] & x3<qx3[2])*1 + (x3>=qx3[2] & x3<qx3[3])*2 +
-    (x3>=qx3[3])*3
-  catx3 <- factor(x3)
-  # income <- factor(x3,labels = c("<10k","10k-100k","100k-200k",">200k"))
-  
-  ### Extra variables
-  
-  x5 <- sample(c(0,1,2,3),nsiz,replace = TRUE,prob = c(0.29,0.3,0.45,0.005))
-  catx5 <- factor(x5)
-  x4 <- rbinom(nsiz,size = 1,prob = 0.1*x5)
-  catx4 <- factor(x4)
-  
-  
-  ## Occurrence Probability/Prevalence
-  # Preset Alpha to determine the variable prevalence
-  py <- expit(alpha[1] + alpha[2] * x1 + alpha[3]*x2 + alpha[4]*I(x3==1) +
-                alpha[5]*I(x3==2) + alpha[6]*I(x3==3) + alpha[7]*x1*x2 + 
-                alpha[8]*x2*I(x3) + alpha[9]*x4 + alpha[10]*I(x5==1) +
-                alpha[11]*I(x5==2) + alpha[12]*I(x5==3)
-              )
-  
-  y <- rbinom(nsiz,size = 1, prob = py)
-  dt <- data.frame(1:nsiz,catx1,catx2,catx3,catx4,catx5,y,py)
-  colnames(dt) <- c("id","catx1","catx2","catx3","catx4","catx5","y","py")
-  
-  
-  temp <- t(combn(names_var,2))
-  names_select <- temp %>% apply(1,paste,collapse = ":")
-  
-  #total_pop <- model.matrix(as.formula(paste0("~",paste0(names_twoway,collapse = "+"))), dt)
-  total_pop <- model.matrix(as.formula(paste0("~0+",paste0(names_select,collapse = "+"))), dt)
-  n_totallevels <- dim(total_pop)[2]
-  
-  ##### Unweighted results
-  margin_pop <- fun.pre0(total_pop,rep(1,nrow(total_pop)),dt$y,pre_pop = 1)[2,]
-  out <- c(overall = mean(dt$y), margin_pop)
-  return(as.numeric(out))
-}
-
-if("pre_pop_11.1.csv" %in% list.files(getwd(), recursive = TRUE)){
-  pre_pop <- read.csv("pre_pop_11.1.csv")
-}else{
-  pre_pop <- subpre.function(nsiz=100000000,alpha,beta,gamma,names_var)
-  write.csv(pre_pop,"C:/Work/2024 Fall/Weighting/pre_pop_11.1.csv")
-}
-
-if("pre_all_11.1.csv" %in% list.files(getwd(), recursive = TRUE)){
-  pre_all <- read.csv("pre_all_11.1.csv")
-}else{
-  pre_all <- subpre.function(nsiz=10000000,alpha,beta,gamma,c("catx1","catx2","catx3","catx4","catx5"))
-  write.csv(pre_all,"C:/Work/2024 Fall/Weighting/pre_all_11.1.csv")
-}
-```
-
-```{r}
-true_y <- as.numeric(pre_pop[,2])[1]
-pre_pop <- unlist(pre_pop[,2])[-1]
-pre_all <- unlist(pre_all[,2])[-1]
-```
-
-
-## Simulation Function
-
-```{r}
-sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
-                    pre_pop,pre_all,true_y,..){
-  ##### Generate the Data #####
+  ##### Variable Specification
   dt <- sample.function(nsiz,alpha,beta,gamma)
   # Mean for current simulation, biased
   temp_y <- mean(dt$y)
+  
   # Size of AoU
   ntaou <- sum(dt$aou)
   # Size of Probability Samples
   nts <- sum(dt$s)
-  
   dt_aou <- dt[dt$aou==1, ] 
   dt_s <- dt[dt$s==1, ]     
   y_aou <- as.matrix(dt_aou$y)
@@ -199,7 +31,7 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   temp <- t(combn(names_univar,2))
   twovars <- temp %>% apply(1,paste,collapse = ":")
   all_aou <- model.matrix(as.formula(paste0("~0+",paste0(twovars,collapse = "+"))), dt_aou)
-  NA_pop <- rep(NA,16)
+  NA_pop <- rep(NA,15)
   
   ### Rule out if there's any combination has zero cell
   clus_zerodetect <- svydesign(id=~1, weights = ~1, fpc =~fpc, data= dt_aou)
@@ -224,13 +56,12 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   names_select <- temp %>% apply(1,paste,collapse = ":")
   sub_aou <- model.matrix(as.formula(paste0("~0+",paste0(names_select,collapse = "+"))), dt_aou)
   n_totallevels <- dim(sub_aou)[2]
-  NA_sub <- matrix(NA,ncol = n_totallevels,nrow = 7)
   
   
   ##### Set Output as the return list
   out <- list()
   names_pop <- c("mean","variance","CI_lower","CI_upper",
-                  "bias","bias2","Coverage","TrueCoverage","size","VarW","NegW",
+                 "bias","bias2","NomCoverage","size","VarW","NegW",
                  "SvyVar","SvyLB","SvyUB","SvyCov","Memory")
   
   ##### M1: Unweighted Result #####
@@ -239,22 +70,18 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   ### Population Estimation
   pop_unweighted <- c(mean(dt_aou$y),var(dt_aou$y))
   pop_unweighted <- c(pop_unweighted,
-                         pop_unweighted[1] - qnorm(0.975) * sqrt(pop_unweighted[2]/ntaou),
-                         pop_unweighted[1] + qnorm(0.975) * sqrt(pop_unweighted[2]/ntaou)
+                      pop_unweighted[1] - qnorm(0.975) * sqrt(pop_unweighted[2]/ntaou),
+                      pop_unweighted[1] + qnorm(0.975) * sqrt(pop_unweighted[2]/ntaou)
   )
   pop_unweighted <- c(pop_unweighted,
                       pop_unweighted[1] - temp_y,
                       (pop_unweighted[1] - temp_y)^2,
                       temp_y >= pop_unweighted[3] & temp_y <= pop_unweighted[4],
-                      true_y >= pop_unweighted[3] & true_y <= pop_unweighted[4],
                       ntaou,0,0,0,0,0,0,0
-                      )
+  )
   names(pop_unweighted) <- names_pop
   result_unweighted$pop <- pop_unweighted                
-  ### Subgroup Estimation
-  sub_unweighted <- fun.pre(sub_aou,rep(1,nrow(sub_aou)),dt_aou$y,pre_pop,
-                            all_aou,pre_all)
-  result_unweighted$sub <- sub_unweighted
+  
   end_time <- proc.time()
   result_unweighted$time <- (end_time - start_time)["elapsed"]
   out[["unweighted"]] <- result_unweighted
@@ -263,12 +90,10 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   result_trueweight <- list()
   start_time <- proc.time()
   ### Population Estimation
-  pop_trueweight <- fun.out(y_aou,1/dt_aou$paou,true_y,temp_y,names_pop)
+  pop_trueweight <- fun.out(y_aou,1/dt_aou$paou,temp_y,names_pop)
   result_trueweight$pop <- pop_trueweight
   
-  ### Subgroup Estimation
-  sub_trueweight <- fun.pre(sub_aou,1/dt_aou$paou,dt_aou$y,pre_pop,all_aou,pre_all)
-  result_trueweight$sub <- sub_trueweight
+  
   end_time <- proc.time()
   result_trueweight$time <- (end_time - start_time)["elapsed"]
   out[["trueweight"]] <- result_trueweight
@@ -287,7 +112,6 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   
   ### Linear
   pop_svy_oneway_linear <- NA_pop
-  sub_svy_oneway_linear <- NA_sub
   time_svy_oneway_linear <- NA
   tryCatch(
     {
@@ -296,24 +120,21 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                  poptotals_oneway,
                                                  calfun = "linear",maxit = 1e2) 
       pop_svy_oneway_linear <- fun.out(y_aou,weights(clus_oneway_calirated),
-                                       true_y,temp_y,names_pop,
+                                       temp_y,names_pop,
                                        clus_oneway_calirated)
-      sub_svy_oneway_linear <- fun.pre(sub_aou,weights(clus_oneway_calirated),dt_aou$y,pre_pop,
-                                       all_aou,pre_all)
+
       end_time <- proc.time()
       time_svy_oneway_linear <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_svy_oneway_linear$pop <- pop_svy_oneway_linear
-  result_svy_oneway_linear$sub <- sub_svy_oneway_linear
   result_svy_oneway_linear$time <- time_svy_oneway_linear
   out[["svy_oneway_linear"]] <- result_svy_oneway_linear
   
   ### Raking
   start_time <- proc.time()
   pop_svy_oneway_rake <- NA_pop
-  sub_svy_oneway_rake <- NA_sub
   time_svy_oneway_rake <- NA
   tryCatch(
     {
@@ -324,16 +145,14 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                       epsilon = rep(1e-7,length(poptotals_oneway))) 
       pop_svy_oneway_rake <- fun.out(y_aou,
                                      weights(clus_oneway_calirated_rake),
-                                     true_y,temp_y,names_pop,
+                                     temp_y,names_pop,
                                      clus_oneway_calirated_rake)
-      sub_svy_oneway_rake <- fun.pre(sub_aou,weights(clus_oneway_calirated_rake),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_svy_oneway_rake <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_svy_oneway_rake$pop <- pop_svy_oneway_rake
-  result_svy_oneway_rake$sub <- sub_svy_oneway_rake
   result_svy_oneway_rake$time <- time_svy_oneway_rake
   out[["svy_oneway_rake"]] <- result_svy_oneway_rake
   
@@ -353,7 +172,6 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   
   ### Linear
   pop_svy_twoway_linear <- NA_pop
-  sub_svy_twoway_linear <- NA_sub
   time_svy_twoway_linear <- NA
   
   # Remove Coliniearity
@@ -369,7 +187,7 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
     temp_names <- sapply(temp_names,  function(term) gsub("(catx)([0-9])[0-9]", "\\1\\2", term))
     temp_twowaynames <- names_twoway[!names_twoway%in%temp_names]
     temp_poptotals_twoway <- sapply(names(poptotals_twoway),
-                                          function(term) gsub("(catx)([0-9])[0-9]", "\\1\\2", term))
+                                    function(term) gsub("(catx)([0-9])[0-9]", "\\1\\2", term))
     temp_poptotals_twoway <- poptotals_twoway[!temp_poptotals_twoway%in%temp_names]
   }
   
@@ -380,44 +198,39 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                      temp_poptotals_twoway,
                                                      calfun = "linear",maxit = 1e2) 
       pop_svy_twoway_linear <- fun.out(y_aou,weights(clus_svy_twoway_calirated),
-                                       true_y,temp_y,
+                                       temp_y,
                                        names_pop,
                                        clus_svy_twoway_calirated)
-      sub_svy_twoway_linear <- fun.pre(sub_aou,weights(clus_svy_twoway_calirated),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_svy_twoway_linear <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_svy_twoway_linear$pop <- pop_svy_twoway_linear
-  result_svy_twoway_linear$sub <- sub_svy_twoway_linear
   result_svy_twoway_linear$time <- time_svy_twoway_linear
   out[["svy_twoway_linear"]] <- result_svy_twoway_linear
   
   ### Raking
   start_time <- proc.time()
   pop_svy_twoway_rake <- NA_pop
-  sub_svy_twoway_rake <- NA_sub
   time_svy_twoway_rake <- NA
   tryCatch(
     {
       clus_svy_twoway_calirated_rake <- survey::calibrate(clus_svy_twoway, 
-                                                         as.formula(paste0("~",paste0(temp_twowaynames,collapse = "+"))),
-                                                         temp_poptotals_twoway,
-                                                         calfun = "raking",maxit = 1e2,
-                                                         epsilon = rep(1e-7,length(temp_poptotals_twoway))) 
+                                                          as.formula(paste0("~",paste0(temp_twowaynames,collapse = "+"))),
+                                                          temp_poptotals_twoway,
+                                                          calfun = "raking",maxit = 1e2,
+                                                          epsilon = rep(1e-7,length(temp_poptotals_twoway))) 
       pop_svy_twoway_rake <- fun.out(y_aou,
                                      weights(clus_svy_twoway_calirated_rake),
-                                     true_y,temp_y,names_pop,
+                                     temp_y,names_pop,
                                      clus_svy_twoway_calirated_rake)
-      sub_svy_twoway_rake <- fun.pre(sub_aou,weights(clus_svy_twoway_calirated_rake),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_svy_twoway_rake <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_svy_twoway_rake$pop <- pop_svy_twoway_rake
-  result_svy_twoway_rake$sub <- sub_svy_twoway_rake
   result_svy_twoway_rake$time <- time_svy_twoway_rake
   out[["svy_twoway_rake"]] <- result_svy_twoway_rake
   
@@ -440,19 +253,16 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   d <- temp$d
   LKHD <- temp$LKHD
   pop_ps_oneway_raw <- NA_pop
-  sub_ps_oneway_raw  <- NA_sub
   time_ps_oneway_raw <- NA
   tryCatch(
     {
-      pop_ps_oneway_raw <- fun.out(y_aou,d,true_y,temp_y,names_pop)
-      sub_ps_oneway_raw <- fun.pre(sub_aou,d,y_aou,pre_pop,all_aou,pre_all)
+      pop_ps_oneway_raw <- fun.out(y_aou,d,temp_y,names_pop)
       end_time <- proc.time()
       time_ps_oneway_raw <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_ps_oneway_raw$pop <- pop_ps_oneway_raw
-  result_ps_oneway_raw$sub <- sub_ps_oneway_raw
   result_ps_oneway_raw$time <- time_ps_oneway_raw
   out[["ps_oneway_raw"]] <- result_ps_oneway_raw
   
@@ -460,11 +270,10 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   result_ps_oneway_linear <- list()
   start_time <- proc.time()
   pop_ps_oneway_linear <- NA_pop
-  sub_ps_oneway_linear  <- NA_sub
   time_ps_oneway_linear <- NA
   dt_oneway_ps <- cbind(dt_aou, weights = d)
   clus_oneway_ps <- svydesign(id=~1, weights = ~weights, fpc =~fpc, data= dt_oneway_ps)
-
+  
   tryCatch(
     {
       clus_ps_oneway_linear <- survey::calibrate(clus_oneway_ps, 
@@ -472,18 +281,16 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                  poptotals_oneway,
                                                  calfun = "linear",maxit = 1e2) 
       pop_ps_oneway_linear <- fun.out(y_aou,weights(clus_ps_oneway_linear),
-                                      true_y,
+                                      
                                       temp_y,
                                       names_pop,
                                       clus_ps_oneway_linear)
-      sub_ps_oneway_linear <- fun.pre(sub_aou,weights(clus_ps_oneway_linear),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_ps_oneway_linear <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_ps_oneway_linear$pop <- pop_ps_oneway_linear
-  result_ps_oneway_linear$sub <- sub_ps_oneway_linear
   result_ps_oneway_linear$time <- time_ps_oneway_raw + time_ps_oneway_linear
   out[["ps_oneway_linear"]] <- result_ps_oneway_linear
   
@@ -491,34 +298,28 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   result_ps_oneway_rake <- list()
   start_time <- proc.time()
   pop_ps_oneway_rake <- NA_pop
-  sub_ps_oneway_rake  <- NA_sub
   time_ps_oneway_rake <- NA
   tryCatch(
     {
       clus_ps_oneway_rake <- survey::calibrate(clus_oneway_ps, 
-                                                as.formula(paste0("~",paste0(names_univar,collapse = "+"))),
-                                                poptotals_oneway,
-                                                calfun = "raking",maxit = 1e2,
-                                                epsilon = rep(1e-7,length(poptotals_oneway))) 
-      pop_ps_oneway_rake <- fun.out(y_aou,weights(clus_ps_oneway_rake),true_y,temp_y,names_pop,clus_ps_oneway_rake)
-      sub_ps_oneway_rake <- fun.pre(sub_aou,weights(clus_ps_oneway_rake),dt_aou$y,pre_pop,all_aou,pre_all)
+                                               as.formula(paste0("~",paste0(names_univar,collapse = "+"))),
+                                               poptotals_oneway,
+                                               calfun = "raking",maxit = 1e2,
+                                               epsilon = rep(1e-7,length(poptotals_oneway))) 
+      pop_ps_oneway_rake <- fun.out(y_aou,weights(clus_ps_oneway_rake),temp_y,names_pop,clus_ps_oneway_rake)
       end_time <- proc.time()
       time_ps_oneway_rake <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_ps_oneway_rake$pop <- pop_ps_oneway_rake
-  result_ps_oneway_rake$sub <- sub_ps_oneway_rake
   result_ps_oneway_rake$time <- time_ps_oneway_raw + time_ps_oneway_rake
   out[["ps_oneway_rake"]] <- result_ps_oneway_rake
   
   ##### M7: Two-way, Pseudo-likelihood-based Propensity Score Weighting; raw, linear and raking #####
   pop_ps_twoway_raw <- NA_pop
-  sub_ps_twoway_raw  <- NA_sub
   pop_ps_twoway_linear <- NA_pop
-  sub_ps_twoway_linear  <- NA_sub
   pop_ps_twoway_rake <- NA_pop
-  sub_ps_twoway_rake  <- NA_sub
   time_ps_twoway_raw <- NA
   time_ps_twoway_linear <- NA
   time_ps_twoway_rake <- NA
@@ -533,33 +334,28 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
     temp <- fun.vs(as.formula(paste0("~",paste0(names_twoway,collapse = "+"))),dt_aou,dt_s)
     d2 <- temp$d # PS two-way 
   },
-    error = function(e) e
+  error = function(e) e
   )
-
+  
   
   ### Return NA if non-convergent
   index_ps_twoway <- all(is.na(d2)) # If 1, indicates non-convergent, VS needed
   if(index_ps_twoway){
     result_ps_twoway_raw$pop <- pop_ps_twoway_raw
-    result_ps_twoway_raw$sub <- sub_ps_twoway_raw
     result_ps_twoway_raw$time <- time_ps_twoway_raw
     out[["ps_twoway_raw"]] <- result_ps_twoway_raw
     result_ps_twoway_linear$pop <- pop_ps_twoway_linear
-    result_ps_twoway_linear$sub <- sub_ps_twoway_linear
     result_ps_twoway_linear$time <- time_ps_twoway_linear
     out[["ps_twoway_linear"]] <- result_ps_twoway_linear
     result_ps_twoway_rake$pop <- pop_ps_twoway_rake
-    result_ps_twoway_rake$sub <- sub_ps_twoway_rake
     result_ps_twoway_rake$time <- time_ps_twoway_rake
     out[["ps_twoway_rake"]] <- result_ps_twoway_rake
   } else{
     ### Raw
-    pop_ps_twoway_raw <- fun.out(y_aou,d2,true_y,temp_y,names_pop)
-    sub_ps_twoway_raw <- fun.pre(sub_aou,d2,y_aou,pre_pop,all_aou,pre_all)
+    pop_ps_twoway_raw <- fun.out(y_aou,d2,temp_y,names_pop)
     end_time <- proc.time()
     time_ps_twoway_raw <- (end_time - start_time)["elapsed"]
     result_ps_twoway_raw$pop <- pop_ps_twoway_raw
-    result_ps_twoway_raw$sub <- sub_ps_twoway_raw
     result_ps_twoway_raw$time <- time_ps_twoway_raw
     out[["ps_twoway_raw"]] <- result_ps_twoway_raw
     
@@ -573,15 +369,13 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                    as.formula(paste0("~",paste0(names_twoway,collapse = "+"))), 
                                                    poptotals_twoway,
                                                    calfun = "linear",maxit = 1e2) 
-        pop_ps_twoway_linear <- fun.out(y_aou,weights(clus_ps_twoway_linear),true_y,temp_y,names_pop,clus_ps_twoway_linear)
-        sub_ps_twoway_linear <- fun.pre(sub_aou,weights(clus_ps_twoway_linear),dt_aou$y,pre_pop,all_aou,pre_all)
+        pop_ps_twoway_linear <- fun.out(y_aou,weights(clus_ps_twoway_linear),temp_y,names_pop,clus_ps_twoway_linear)
         end_time <- proc.time()
         time_ps_twoway_linear <- (end_time - start_time)["elapsed"]
       },
       error = function(e) e
     )
     result_ps_twoway_linear$pop <- pop_ps_twoway_linear
-    result_ps_twoway_linear$sub <- sub_ps_twoway_linear
     result_ps_twoway_linear$time <- time_ps_twoway_raw + time_ps_twoway_linear 
     out[["ps_twoway_linear"]] <- result_ps_twoway_linear
     
@@ -594,15 +388,13 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                  poptotals_twoway,
                                                  calfun = "raking",maxit = 1e2,
                                                  epsilon = rep(1e-7,length(poptotals_twoway))) 
-        pop_ps_twoway_rake <- fun.out(y_aou,weights(clus_ps_twoway_rake),true_y,temp_y,names_pop,clus_ps_twoway_rake)
-        sub_ps_twoway_rake <- fun.pre(sub_aou,weights(clus_ps_twoway_rake),dt_aou$y,pre_pop,all_aou,pre_all)
+        pop_ps_twoway_rake <- fun.out(y_aou,weights(clus_ps_twoway_rake),temp_y,names_pop,clus_ps_twoway_rake)
         end_time <- proc.time()
         time_ps_twoway_rake <- (end_time - start_time)["elapsed"]
       },
       error = function(e) e
     )
     result_ps_twoway_rake$pop <- pop_ps_twoway_rake
-    result_ps_twoway_rake$sub <- sub_ps_twoway_rake
     result_ps_twoway_rake$time <- time_ps_twoway_raw + time_ps_twoway_rake
     out[["ps_twoway_rake"]] <- result_ps_twoway_rake
   }
@@ -643,23 +435,20 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   ### Raw
   result_ps_vs_twoway_raw <- list()
   pop_ps_vs_twoway_raw <- NA_pop
-  sub_ps_vs_twoway_raw  <- NA_sub
   time_ps_vs_twoway_raw <- NA
   n_vs <- rep(NA, 2)
   tryCatch(
     {
-      pop_ps_vs_twoway_raw <- fun.out(y_aou,d_vs,true_y,temp_y,names_pop)
-      sub_ps_vs_twoway_raw <- fun.pre(sub_aou,d_vs,y_aou,pre_pop,all_aou,pre_all)
+      pop_ps_vs_twoway_raw <- fun.out(y_aou,d_vs,temp_y,names_pop)
       end_time <- proc.time()
       time_ps_vs_twoway_raw <- (end_time - start_time)["elapsed"]
       n_vs <- c(unselect = length(names_twoway) - length(names_univar_new),
-                 select = length(names_univar_new) - length(names_univar)
-                )
+                select = length(names_univar_new) - length(names_univar)
+      )
     },
     error = function(e) e
   )
   result_ps_vs_twoway_raw$pop <- pop_ps_vs_twoway_raw
-  result_ps_vs_twoway_raw$sub <- sub_ps_vs_twoway_raw
   result_ps_vs_twoway_raw$time <- time_ps_vs_twoway_raw
   result_ps_vs_twoway_raw$n_vs <- n_vs
   out[["ps_vs_twoway_raw"]] <- result_ps_vs_twoway_raw
@@ -667,7 +456,6 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   ### Linear
   result_ps_vs_twoway_linear <- list()
   pop_ps_vs_twoway_linear <- NA_pop
-  sub_ps_vs_twoway_linear  <- NA_sub
   time_ps_vs_twoway_linear <- NA
   start_time <- proc.time()
   if(!all(is.na(d_vs))){
@@ -677,53 +465,48 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
     transformed_names <- sapply(margin_names, transform_term)
     poptotals_ps_vs <- eval(parse(text = paste0("c(", paste(transformed_names, collapse = ", "), ")")))
   }
-    
+  
   tryCatch(
     {
       clus_ps_twoway_linear_vs_calirated <- survey::calibrate(clus_ps_vs_twoway, 
-                                                             as.formula(paste0("~",paste0(names_univar_new,collapse = "+"))), 
-                                                             poptotals_ps_vs,
-                                                             calfun = "linear",maxit = 1e2) 
+                                                              as.formula(paste0("~",paste0(names_univar_new,collapse = "+"))), 
+                                                              poptotals_ps_vs,
+                                                              calfun = "linear",maxit = 1e2) 
       pop_ps_vs_twoway_linear <- fun.out(y_aou,weights(clus_ps_twoway_linear_vs_calirated),
-                                         true_y,temp_y,
+                                         temp_y,
                                          names_pop,
                                          clus_ps_twoway_linear_vs_calirated)
-      sub_ps_vs_twoway_linear <- fun.pre(sub_aou,weights(clus_ps_twoway_linear_vs_calirated),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_ps_vs_twoway_linear <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_ps_vs_twoway_linear$pop <- pop_ps_vs_twoway_linear
-  result_ps_vs_twoway_linear$sub <- sub_ps_vs_twoway_linear
   result_ps_vs_twoway_linear$time <- time_ps_vs_twoway_raw + time_ps_vs_twoway_linear
   out[["ps_vs_twoway_linear"]] <- result_ps_vs_twoway_linear
   
   ### Raking
   result_ps_vs_twoway_rake <- list()
   pop_ps_vs_twoway_rake <- NA_pop
-  sub_ps_vs_twoway_rake  <- NA_sub
   time_ps_vs_twoway_rake <- NA
   start_time <- proc.time()
   tryCatch(
     {
       clus_ps_vs_twoway_rake <- survey::calibrate(clus_ps_vs_twoway, 
-                                                 as.formula(paste0("~",paste0(names_univar_new,collapse = "+"))),
-                                                 poptotals_ps_vs,
-                                                 calfun = "raking",maxit = 1e2,
-                                                 epsilon = rep(1e-7,length(poptotals_ps_vs))) 
+                                                  as.formula(paste0("~",paste0(names_univar_new,collapse = "+"))),
+                                                  poptotals_ps_vs,
+                                                  calfun = "raking",maxit = 1e2,
+                                                  epsilon = rep(1e-7,length(poptotals_ps_vs))) 
       pop_ps_vs_twoway_rake <- fun.out(y_aou,
                                        weights(clus_ps_vs_twoway_rake),
-                                       true_y,temp_y,names_pop,
+                                       temp_y,names_pop,
                                        clus_ps_vs_twoway_rake)
-      sub_ps_vs_twoway_rake <- fun.pre(sub_aou,weights(clus_ps_vs_twoway_rake),dt_aou$y,pre_pop,all_aou,pre_all)
       end_time <- proc.time()
       time_ps_vs_twoway_rake <- (end_time - start_time)["elapsed"]
     },
     error = function(e) e
   )
   result_ps_vs_twoway_rake$pop <- pop_ps_vs_twoway_rake
-  result_ps_vs_twoway_rake$sub <- sub_ps_vs_twoway_rake
   result_ps_vs_twoway_rake$time <- time_ps_vs_twoway_raw + time_ps_vs_twoway_rake
   out[["ps_vs_twoway_rake"]] <- result_ps_vs_twoway_rake
   
@@ -734,18 +517,18 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
   n_max <- length(names_univar_new)
   index_con <- 1
   pop_ps_vs_stepwise_twoway_rake <- NA_pop
-  sub_ps_vs_stepwise_twoway_rake  <- NA_sub
   time_ps_vs_stepwise_twoway_rake <- NA
   n_stepwise <- rep(NA, 3)
   while(!is.na(index_con) & n_uni < n_max){
     n_uni <- n_uni + 1
     cat_temp <- formula(paste0("~",paste0(names_univar_new[seq(n_uni)],collapse = "+")))
     temp <- dt_aou
-    temp_d <- fun.vs(cat_temp,dt_aou,dt_s)$d
+    temp_out <- fun.vs(cat_temp,dt_aou,dt_s)
+    temp_d <- temp_out$d
+    theta <- temp_out$theta
     dt_stepwise <- cbind(temp, weights = temp_d)
     
     clus_stepwise <- svydesign(id=~1, weights = ~weights, data= dt_stepwise)
-    names_ps <- cal_names(cat_temp,clus_stepwise)
     
     margin_names <- cal_names(as.formula(paste0("~",paste0(names_univar_new[seq(n_uni)],collapse = "+"))),clus_stepwise)
     transformed_names <- sapply(margin_names, transform_term)
@@ -759,11 +542,9 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
                                                       epsilon = rep(1e-7,length(poptotals_stepwise))) 
         pop_ps_vs_stepwise_twoway_rake <- fun.out(y_aou,
                                                   weights(clus_stepwise_calibrated),
-                                                  true_y,
+                                                  
                                                   temp_y,names_pop,
                                                   clus_stepwise_calibrated)
-        sub_ps_vs_stepwise_twoway_rake <- fun.pre(sub_aou,weights(clus_stepwise_calibrated),
-                                                  dt_aou$y,pre_pop,all_aou,pre_all)
         end_time <- proc.time()
         time_ps_vs_stepwise_twoway_rake <- (end_time - start_time)["elapsed"]
         n_stepwise <- c(total = n_max,
@@ -777,58 +558,120 @@ sim.fun <- function(nsiz,alpha,beta,gamma,names_var,
     )
   }
   result_ps_vs_stepwise_twoway_rake$pop <- pop_ps_vs_stepwise_twoway_rake
-  result_ps_vs_stepwise_twoway_rake$sub <- sub_ps_vs_stepwise_twoway_rake
   result_ps_vs_stepwise_twoway_rake$time <- time_ps_vs_stepwise_twoway_rake
   result_ps_vs_stepwise_twoway_rake$n_stepwise <- n_stepwise
   out[["ps_vs_stepwise_twoway_rake"]] <- result_ps_vs_stepwise_twoway_rake
   
-  ##### Average Subgroup Size
-  out$avg_size <- colSums(sub_aou)
+  ### Variance Correction
+  result_varcor <- NA
+  tryCatch(
+    {
+      result_varcor <- fun.rails.var(dt_aou = dt_aou,
+                                     dt_s = dt_s,
+                                     y_aou = y_aou,
+                                     cat_temp = cat_temp,
+                                     w_NP =weights(clus_stepwise_calibrated),
+                                     d_P = dt_s$w,
+                                     pi_NP = temp_out$pi_aou,
+                                     pi_P = temp_out$pia,
+                                     T_pop = poptotals_stepwise,
+                                     tempy = temp_y
+      )
+    },error = function(e) e
+  )
+  out[["var_correction"]] <- result_varcor
+  
+  
+  # M10. No variable selection, use oracle model
+  result_oracle_rails <- list()
+  start_time <- proc.time()
+  pop_oracle_rails <- NA_pop
+  time_oracle_rails <- NA
+  tryCatch(
+    {
+      cat_temp <- true_model
+      temp <- dt_aou
+      temp_out <- fun.vs(cat_temp,dt_aou,dt_s)
+      temp_d <- temp_out$d
+      theta <- temp_out$theta
+      dt_oracle_rails <- cbind(temp, weights = temp_d)
+      
+      clus_oracle_rails <- svydesign(id=~1, weights = ~weights, data= dt_oracle_rails)
+      
+      margin_names <- cal_names(true_model,clus_stepwise)
+      transformed_names <- sapply(margin_names, transform_term)
+      poptotals_oracle_rails <- eval(parse(text = paste0("c(", paste(transformed_names, collapse = ", "), ")")))
+      clus_oracle_rails <- survey::calibrate(clus_oracle_rails, 
+                                             cat_temp,
+                                             poptotals_oracle_rails,
+                                             calfun = "raking",maxit = 1e2,
+                                             epsilon = rep(1e-7,length(poptotals_oracle_rails))) 
+      pop_oracle_rails <- fun.out(y_aou,
+                                  weights(clus_oracle_rails),
+                                  
+                                  temp_y,names_pop,
+                                  clus_stepwise_calibrated)
+      end_time <- proc.time()
+      time_oracle_rails <- (end_time - start_time)["elapsed"]
+      
+    },
+    error = function(e) {
+      index_con <<- NA
+    }
+  )
+  result_oracle_rails$pop <- pop_oracle_rails
+  result_oracle_rails$time <- time_oracle_rails
+  out[["oracle_rails"]] <- result_oracle_rails
+  
+  
+  
+  ### Variance without VS
+  result_varcor_oracle_rails <- NA
+  tryCatch(
+    {
+      cat_temp <- true_model
+      temp <- dt_aou
+      temp_out <- fun.vs(cat_temp,dt_aou,dt_s)
+      temp_d <- temp_out$d
+      theta <- temp_out$theta
+      dt_oracle_rails <- cbind(temp, weights = temp_d)
+      result_varcor_oracle_rails <- fun.rails.var(dt_aou = dt_aou,
+                                     dt_s = dt_s,
+                                     y_aou = y_aou,
+                                     cat_temp = cat_temp,
+                                     w_NP =weights(clus_oracle_rails),
+                                     d_P = dt_s$w,
+                                     pi_NP = temp_out$pi_aou,
+                                     pi_P = temp_out$pia,
+                                     T_pop = poptotals_oracle_rails,
+                                     tempy = temp_y
+      )
+    },error = function(e) e
+  )
+  out[["var_correction_oracle_rails"]] <- result_varcor_oracle_rails
+  
+  #### Raking with stacked variance
+  #### Univariate only
+  result_varcor_svy_oneway_rake <- NA
+  cat_temp <- as.formula(paste0("~",paste0(names_univar,collapse = "+")))
+  tryCatch(
+    {
+      result_varcor_svy_oneway_rake <- fun.svy.var(dt_aou = dt_aou,
+                                                   y_aou = y_aou,
+                                                   cat_temp = cat_temp,
+                                                   w_NP = weights(clus_oneway_calirated_rake),
+                                                   T_pop = poptotals_oneway,
+                                                   tempy = temp_y
+        
+      )
+    },error = function(e) e
+  )
+  out[["var_correction_svy_oneway_rake"]] <- result_varcor_svy_oneway_rake
+  
+  out$out_size <- ntaou
   
   ##### Number of Zero Cells
   out$zero_cells <- index_zerocell
   
-  
   return(out)
 }
-```
-
-# Running Simulation
-
-```{r}
-n = 1000
-
-### Simulations
-if("11_1.RData" %in% list.files(getwd(), recursive = TRUE)){
-  sim_result <- readRDS("11_1.RData")
-}else{
-  sim_result <- replicate(n,suppressWarnings(sim.fun(nsiz,alpha,beta,gamma,
-                                                     names_var,pre_pop,pre_all,true_y)))
-  save.image("C:/Work/2024 Summer/AoU_Weighting/Simulation/11_1.RData")
-}
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
