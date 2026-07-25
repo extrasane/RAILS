@@ -14,6 +14,28 @@ The repository is organized into three main folders: **Functions**, **Simulation
 ## Repository Structure
 
 ```
+├── Application/
+│   ├── Global RAILS/
+│   │   ├── README.md
+│   │   ├── Data Processing/
+│   │   │   ├── README.md
+│   │   │   ├── 01_PUMS_Prep.R
+│   │   │   ├── 02_AoU_Prep.R
+│   │   │   └── 03_NHIS_Prep.R
+│   │   └── RAILS Procedure/
+│   │       ├── README.md
+│   │       ├── AoU_Fun.R
+│   │       ├── 04_Global_RAILS.R
+│   │       ├── 05_Prevalence_Analysis.R
+│   │       ├── 06_Phecode_Categories.R
+│   │       ├── 07_ASCVD_Analysis.R
+│   │       └── 08_NHIS_Comparison.R
+│   └── Subgroup RAILS/
+│       ├── README.md
+│       ├── Sub_AoU_Fun.R
+│       └── 09_Sub_RAILS.R
+│
+│
 ├── Functions/
 │   ├── simfun.R
 │   ├── sample_functions.R
@@ -51,6 +73,33 @@ The repository is organized into three main folders: **Functions**, **Simulation
         ├── S3_summary_1.Rmd … S3_summary_6.Rmd
         └── var_summary.Rmd
 ```
+
+---
+
+## Application
+
+The `Application/` folder contains code for applying RAILS to real data within the All of Us Researcher Workbench. Access to the Workbench is required to run this code; the underlying AoU data are not publicly available.
+
+| Folder | Description |
+|---|---|
+| `Global RAILS/` | Applies the RAILS methodology at the national level using AoU biobank data as the non-probability sample and 2022 ACS PUMS as the probability reference sample. See `Global RAILS/README.md` for a step-by-step guide. |
+| `Subgroup RAILS/` | Runs the same RAILS procedure within levels of a subgroup variable (e.g. sex, Census region) via `fun.sub.rails.threeway`, a wrapper around the Global RAILS estimator. See `Subgroup RAILS/README.md`. |
+
+Scripts are numbered in run order across both folders — steps 1–8 are the Global RAILS pipeline, step 9 the subgroup analysis:
+
+| Step | Script | Purpose |
+|---|---|---|
+| 1 | `01_PUMS_Prep.R` | Download and recode 2022 ACS PUMS reference data |
+| 2 | `02_AoU_Prep.R` | Query and harmonize AoU biobank data (Workbench only) |
+| 3 | `03_NHIS_Prep.R` | Download and recode NHIS 2020 (hybrid design) |
+| 4 | `04_Global_RAILS.R` | Estimate RAILS weights and benchmark methods |
+| 5 | `05_Prevalence_Analysis.R` | Weighted disease prevalence, national and by region |
+| 6 | `06_Phecode_Categories.R` | Phecode-grouped prevalence and bias figures |
+| 7 | `07_ASCVD_Analysis.R` | ASCVD risk distribution before/after weighting |
+| 8 | `08_NHIS_Comparison.R` | AoU vs NHIS 2020 health-outcome comparison table |
+| 9 | `09_Sub_RAILS.R` | RAILS within a subgroup stratum |
+
+The core estimator is `fun.rails.threeway()` in `Global RAILS/RAILS Procedure/AoU_Fun.R`: a two-way pseudo-likelihood propensity model, forward likelihood-ratio selection of three-way interactions, and LIFO stepwise raking to PUMS population margins — all computed on aggregated covariate cells. It also returns seven benchmark weighting methods for comparison.
 
 ---
 
@@ -92,7 +141,7 @@ Each `*_simulation.Rmd` file is self-contained. To reproduce results:
 3. If the corresponding `.RData` result file already exists in the `Results/` folder, the simulation will be skipped and the existing file will be loaded. To re-run from scratch, delete or rename the `.RData` file.
 4. Each simulation runs **1,000 replicates** via `lapply(1:n, function(seed) sim.fun(...))`. Running a single analysis (Section 4 of the paper) takes approximately **3 minutes** on a standard desktop.
 
-> **Note:** All of Us data is not publicly available. To run the application code, access must be obtained through the All of Us Researcher Workbench. NHIS and PUMS 2022 data are publicly available from the CDC and U.S. Census Bureau, respectively.
+> **Note:** All of Us data is not publicly available. To run the application code, access must be obtained through the All of Us Researcher Workbench. NHIS and PUMS 2022 data are publicly available from the [CDC (NHIS)](https://www.cdc.gov/nchs/nhis) and [U.S. Census Bureau (PUMS)](https://www.census.gov/programs-surveys/acs/microdata/access.html), respectively.
 
 ---
 
