@@ -193,3 +193,10 @@ Running under: Windows 11 x64 (build 22631)
 
 ---
 
+
+## Related
+
+- **The R package** is at [extrasane/RAILSpkg](https://github.com/extrasane/RAILSpkg):
+  `remotes::install_github("extrasane/RAILSpkg")` installs it as `RAILS`.
+  It reproduces the estimator used here, with the variance estimator, the
+  aggregation helpers and the ACS PUMS preprocessing packaged up.

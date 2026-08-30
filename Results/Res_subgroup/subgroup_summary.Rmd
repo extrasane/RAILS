@@ -1,0 +1,898 @@
+---
+title: "Subgroup calibration - Case 000"
+author: "Huiding Chen"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: "hide"
+---
+
+```{r,include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(cat)
+library(survey)
+library(kableExtra)
+library(VGAM)
+library(distributionsrd)
+library(ggplot2)
+library(truncnorm)
+library(reshape2)
+library(paletteer)
+library(plotly)
+library(stringr)
+library(purrr)
+library(RVAideMemoire)
+library(glmnet)
+library(DT)
+library(viridis)
+knitr::opts_chunk$set(warning = FALSE,message = FALSE)
+```
+
+
+# Brief Summary
+
+| Covariate Dependency|Outcome Heterogeneity|Non-prob Heterogeneity|
+| --------------------:|:-------------------:|---------------------:|
+| No|No|No|
+
+
+```{r}
+spec_color2 <- function(x, alpha = 1, begin = 0, end = 1,
+                        direction = 1, option = "D",
+                        na_color = "#BBBBBB", scale_from = NULL, palette = NULL
+                        ) {
+  
+  n <- length(palette)
+  if(is.null(palette)){
+    palette = viridisLite::viridis(256, alpha = 1, begin = 0, end = 1, direction = 1, option = "D")
+  }
+  if (is.null(scale_from)) {
+    x <- round(scales::rescale(x, c(1, n)))
+  } else {
+    x <- round(scales::rescale(x, to = c(1, n),
+                               from = scale_from))
+  }
+  
+  color_code <- palette[x]
+  color_code[is.na(color_code)] <- na_color
+  return(color_code)
+}
+
+# Function to apply row_spec automatically
+
+apply_row_colors <- function(df,names_caption = NULL,
+                             n = 1000, size = 1e3,digits = 5) {
+  df <- df %>% 
+    as.data.frame() %>% 
+    select(where(~ !any(is.na(head(.x, -1))))) %>% 
+    na.omit %>%
+    (`*`)(size) %>%
+    round(digits)
+  # Apply cell_spec to each cell in the numeric columns
+  df_modified <- df %>%
+  t() %>%
+  as.data.frame() %>%
+  mutate(across(everything(), ~ cell_spec(
+    ., 
+    background = spec_color2(., alpha = 1,  
+                             option = "D",
+                             begin = 0.2,
+                             end = 0.6,
+                             palette = paletteer_d("ggsci::orange_material",8)), 
+    color = "black"
+  ))) %>%
+  t() %>%
+  as.data.frame()
+  # Create a kable table with the modified data frame
+  table <- df_modified %>%
+    kable(format = "html",  align = "c",
+          caption = names_caption,
+          escape = FALSE) %>%
+    kable_styling(full_width = FALSE, c("striped", "condensed"),)
+  
+  return(table)
+}
+
+#names_var <- c("catx1","catx2","catx3")
+```
+
+## Intro
+
+```{r}
+scenario <- "X5_V12"
+case <- "000"
+var_method <- c("rails","rails_subgroup")
+var_stratified <- c("catx5")
+```
+
+
+```{r}
+n = 1000
+pre_pop <- read.csv(paste0("pre_pop_",scenario,"_",case,".csv"),header = TRUE)
+pre_all <- read.csv(paste0("pre_all_",scenario,"_",case,".csv"))
+truey <- as.numeric(pre_pop[,2])[1]
+pre_pop <- unlist(pre_pop[,2])[-1]
+pre_all <- unlist(pre_all[,2])[-1]
+sim_result <- readRDS(paste0(scenario,"_",case,".RData"))
+
+```
+
+## Report Function
+
+```{r}
+fun.rep <- function(x = sim_result,n,pre_pop,truey,
+                    var_method,var_stratified){
+  # x as the input list
+  # v as the variable names to be reported
+  # n as the number of simulations
+  x <- sim_result
+  # Define the population
+  temp_pop <- c(pre_pop,0)
+  
+  # Names of the variables
+  names_var <- colnames(x[[1]]$unweighted$sub)
+  n_var <- length(names_var)
+  
+  # Names of the Methods
+  index_method <- which.max(sapply(x, length))
+  names_method <- names(x[[index_method]])[1:(length(x[[index_method]])-3)]
+  n_method <- length(names_method)
+  names_method_fix <- c("naive","oracle","G-Raking","NPS","GVS",
+                        "G-RAILS","S-Raking","S-RAILS")
+  
+  # Index for population estimate
+  names_popest <- names(x[[index_method]]$unweighted$pop)
+  n_popest <- length(names_popest)
+  
+  # Index for subgroup estimate
+  names_subest <- rownames(x[[index_method]]$unweighted$sub)
+  n_subest <- length(names_subest)
+  
+  # Count the number of NAs for each method
+  na_count <- sapply(names_method, function(method) {
+    sum(sapply(x, function(sim) {
+      any(is.na(sim[[method]]$sub))
+    }))
+  })
+  
+  
+  
+  # Collect the number of error messages
+  error_count <- c()
+  error_index <- c()
+  for (i in 1:n){
+    if(!is.null(x[[i]]$error)){
+      error_count <- c(error_count,x[[i]]$error)
+      error_index <- c(error_index,i)
+    }
+  }
+  error_count <- as.vector(table(error_count))
+  if(length(error_count)==0){
+    error_count <- 0
+  }
+  # # Same as Rails
+  # diff_from_rails <- c()
+  # for (i in 1:n){
+  #   if(!is.null(x[[i]]$mix_RR$diff_from_rails)){
+  #     diff_from_rails <- c(diff_from_rails,x[[i]]$mix_RR$diff_from_rails)
+  #   }
+  # }
+  # diff_from_rails <- sum(diff_from_rails)
+  
+  # Population Prevalence
+  count_non_na <- numeric(length = n_method)
+  sum_pop <- matrix(0,ncol = n_popest,nrow = n_method)
+  est_pop <- matrix(0,nrow = n,ncol = n_method)
+  sd_pop <- matrix(0,nrow = n,ncol = n_method)
+  colnames(sum_pop) <- names_popest
+  colnames(est_pop) <- names_method_fix
+  colnames(sd_pop) <- names_method_fix
+  rownames(sum_pop) <- names_method_fix
+  for(i in setdiff(1:n,error_index)){
+    for(j in 1:n_method){
+      temp <- x[[i]][[names_method[j]]]$pop
+      count_non_na[j] <- count_non_na[j] + all(!is.na(temp[1]))
+      sum_pop[j,] <- sum_pop[j,] + ifelse((is.na(temp)),0,temp)
+      est_pop[i,j] <-  ifelse(is.na(temp[1]),NA,temp[1])
+      sd_pop[i,j] <-  ifelse(is.na(temp[2]),NA,sqrt(temp[2]))
+    }
+  }
+  out_mean <-sum_pop/count_non_na
+  out_mean <- cbind(out_mean, "Ratio of NAs" = 1 - count_non_na/n)
+  out_mean <- as.data.frame(out_mean)
+  empsd <-      apply(est_pop,2,sd,na.rm = TRUE)
+  est_median <- apply(est_pop,2,median,na.rm = TRUE)
+  exp_sd <-     apply(sd_pop,2,mean,na.rm = TRUE)
+  sd_median <-  apply(sd_pop,2,median,na.rm = TRUE)
+  out_mad <-    apply(est_pop,2,mad,na.rm = TRUE)
+  
+  
+  # Bias v.s. true y
+  out_mean <- out_mean %>%
+    mutate(median = est_median,.after = "mean") %>%
+    mutate("Bias(Mean - True)" = mean - truey,.after = bias2) %>%
+    mutate("Bias(Median - True)" = median - truey,.after = "Bias(Mean - True)")%>%
+    mutate("Relative Bias(Mean)" = (mean - truey)/truey,.after = "Bias(Median - True)") %>%
+    mutate("Relative Bias(Median)" = (median - truey)/truey,.after = "Relative Bias(Mean)") %>%
+    mutate("Avg SD" = exp_sd,.after = "Relative Bias(Median)") %>%
+    mutate("Emp SD" = empsd,.after = "Avg SD") %>%
+    mutate("Median SD" = sd_median,.after = "Emp SD") %>%
+    mutate("MAD" = out_mad,.after = "Emp SD")
+  
+  # Oracle Coverage
+  out_oracov <- numeric(length = n_method)
+  for(i in setdiff(1:n,error_index)){
+    for(j in 1:n_method){
+      temp <- x[[i]][[names_method[j]]]$pop
+      debias_est <- temp[1] - out_mean$`Bias(Mean - True)`[j]
+      temp_ci <- debias_est + c(-1,1)*1.96*sqrt(temp[2])
+      temp_oracov <- truey >= temp_ci[1] & truey <= temp_ci[2]
+      out_oracov[j] <- out_oracov[j] + ifelse(is.na(temp_oracov),0,temp_oracov)
+    }
+  }
+  names(out_oracov) <- names_method_fix
+  out_oracov <- out_oracov/count_non_na
+  out_mean <- out_mean %>%
+    mutate("Oracle Coverage" = out_oracov,.after = TrueCoverage)
+  
+  # Mean of Bias
+  out_list <- vector("list", length(names_subest))
+  names(out_list) <- names_subest
+  for(k in 1:n_subest){
+    out_list[[k]] <- as.data.frame(matrix(0,ncol = n_var ,nrow = n_method))
+    colnames(out_list[[k]]) <- names_var
+    for(i in setdiff(1:n,error_index)){
+      for(j in 1:n_method){
+        temp <- unlist(x[[i]][[names_method[j]]]$sub[k,])
+        out_list[[k]][j,] <- out_list[[k]][j,] +  ifelse((is.na(temp)),rep(0,n_var),temp)
+      }
+    }
+  }
+  for(k in 1:n_subest){
+    rownames(out_list[[k]]) <- names_method_fix
+    out_list[[k]] <- out_list[[k]]/count_non_na
+  }
+  out_sub_mean <- out_list$mean[2,]
+  out_sub_bias <- sweep(out_list$mean,2, as.numeric(pre_pop), FUN = "-")
+  out_sub_bias2 <- (out_sub_bias)^2
+  out_sub_cov <- out_list$Coverage
+  
+  # Elapsed Time
+  out_time <- numeric(length = n_method)
+  names(out_time) <- names_method_fix
+  for(i in setdiff(1:n,error_index)){
+    for(j in 1:n_method){
+      temp <- x[[i]][[names_method[j]]]$time
+      out_time[j] <- out_time[j] + ifelse((is.na(temp)),0,temp)
+    }
+  }
+  out_time <- out_time/count_non_na
+  
+  # Average Size
+  out_size <- vector("numeric", length = n_var)
+  #names(out_size) <- names_var
+  for(i in setdiff(1:n,error_index)){
+    temp <- x[[i]]$avg_size
+    out_size <- out_size + temp
+  }
+  out_size <- out_size/(n-error_count)
+  
+  # Average Variable Selected
+  out_vs_n <- numeric(3)
+  for(i in setdiff(1:n,error_index)){
+    temp <- x[[i]]$rails$n_stepwise
+    out_vs_n <- out_vs_n + ifelse((is.na(temp)),0,temp)
+  }
+  out_vs_n <- out_vs_n/count_non_na[names_method=="rails"]
+  #out_vs_n <- c(total= sum(out_vs_n),out_vs_n)
+  
+  
+  
+  # Plot for Total Bias
+  bias <- out_mean$`Bias(Mean - True)`
+  tt <- data.frame(matrix(0,nrow = n,ncol = n_method))
+  colnames(tt) <- names_method_fix
+  
+  for(i in setdiff(1:n,error_index)){
+    for(j in 1:n_method){
+      temp <- x[[i]][[names_method[j]]]$pop[1]
+      tt[i,j] <-  ifelse((is.na(temp)),NA,temp) - truey
+    }
+  }
+  
+  tmat <- data.frame(Method = names_method_fix,MeanBias = bias) %>% na.omit()
+  level_order <- tmat$Method
+  tmp_all <- tt %>%
+    as.data.frame() %>%
+    select(where(~ !all(is.na(.)))) %>%
+    tidyr::pivot_longer(everything(), names_to = "Method",values_to = "value") %>%
+    right_join(tmat) %>%
+    mutate(Method = factor(Method, levels = level_order)) %>%
+    mutate(Method = droplevels(Method))
+  
+  # Plot for Subgroup Mean
+  out_sub_plot_mean <- vector("list", n_var)
+  names(out_sub_plot_mean) <- names_var
+  for(k in 1:n_var){
+    sub_mean <- out_sub_mean[,k]
+    out_sub_plot_mean[[k]] <- as.data.frame(matrix(0,nrow = n ,ncol = n_method))
+    colnames(out_sub_plot_mean[[k]]) <- names_method_fix
+    for(i in setdiff(1:n,error_index)){
+      for(j in 1:n_method){
+        temp <- unlist(x[[i]][[names_method[j]]]$sub[2,k])
+        out_sub_plot_mean[[k]][i,j] <- ifelse((is.na(temp)),rep(0,n_var),temp)
+      }
+    }
+    tmat <- data.frame(Method = names_method_fix,PopMean = sub_mean) %>% na.omit()
+    level_order <- tmat$Method
+    tmp <- out_sub_plot_mean[[k]] %>%
+      as.data.frame() %>%
+      select(where(~ !all(is.na(.)))) %>%
+      tidyr::pivot_longer(everything(), names_to = "Method",values_to = "value") %>%
+      right_join(tmat) %>%
+      mutate(Method = factor(Method, levels = level_order)) %>%
+      mutate(Method = droplevels(Method))
+    out_sub_plot_mean[[k]] <- tmp
+  }
+  
+  
+  
+  
+  # Mean of Bias
+  # Plot for Subgroup Bias
+  out_sub_plot_bias <- vector("list", n_var)
+  names(out_sub_plot_bias) <- names_var
+  for(k in 1:n_var){
+    bias <- out_sub_bias[,k]
+    out_sub_plot_bias[[k]] <- as.data.frame(matrix(0,nrow = n ,ncol = n_method))
+    colnames(out_sub_plot_bias[[k]]) <- names_method_fix
+    for(i in setdiff(1:n,error_index)){
+      for(j in 1:n_method){
+        temp <- unlist(x[[i]][[names_method[j]]]$sub[2,k])
+        out_sub_plot_bias[[k]][i,j] <- ifelse((is.na(temp)),rep(0,n_var),temp) - pre_pop[k]
+      }
+    }
+    tmat <- data.frame(Method = names_method_fix,MeanBias = bias) %>% na.omit()
+    level_order <- tmat$Method
+    tmp <- out_sub_plot_bias[[k]] %>%
+      as.data.frame() %>%
+      select(where(~ !all(is.na(.)))) %>%
+      tidyr::pivot_longer(everything(), names_to = "Method",values_to = "value") %>%
+      right_join(tmat) %>%
+      mutate(Method = factor(Method, levels = level_order)) %>%
+      mutate(Method = droplevels(Method))
+    out_sub_plot_bias[[k]] <- tmp
+  }
+  
+  # Histogram for models selected
+  out_model <- replicate(1000,
+                     vector("list", 1 + length(var_method)),  # expression evaluated 1000×
+                     simplify = FALSE)
+  diff_from_rails <- rep(1,length = n)
+  for(i in setdiff(1:n,error_index)){
+    out_model[[i]][[1]] <- x[[i]]$rails$model
+    temp_model <- x[[i]]$rails$model
+    # Rule out characters if consist of var_startifed for temp_model
+    temp_model <- temp_model[!grepl(paste(var_stratified,collapse = "|"),temp_model)]
+    if(!is.null(x[[i]]$rails_subgroup$diff_from_rails)){
+      diff_from_rails[i] <- 0
+    } else {
+      exprs <- unlist(lapply(seq_along(var_method[-1]), function(k) {
+        nm <- var_method[k+1]
+        c(
+          sprintf("out_model[[%d]][[2]] <- list(x[[%d]]$%s$model_ori)",
+                  i,i, nm),
+          sprintf("out_model[[%d]][[3]] <- list(x[[%d]]$%s$model_lifo)",
+                  i,i, nm)
+        )
+      }))
+      big_code <- paste(exprs, collapse = "\n")
+      eval(parse(text = big_code))
+    }
+  }
+  
+  out <- list(out_mean = out_mean,
+            out_sub_mean = out_sub_mean,
+            out_sub_bias = out_sub_bias,
+            out_sub_bias2 = out_sub_bias2,
+            out_sub_cov = out_sub_cov,
+            out_time = out_time,
+            out_size = out_size,
+            out_vs_n = out_vs_n,
+            out_p_all = tmp_all,
+            out_list = out_list,
+            out_p_sub_mean = out_sub_plot_mean,
+            out_p_sub_bias = out_sub_plot_bias,
+            out_level_order = level_order,
+            out_error = error_count,
+            out_na_count = na_count,
+            out_diff_from_rails = diff_from_rails,
+            out_model = out_model)
+  return(out)
+}
+```
+
+# Results with Linear Methods
+
+Several methods results are omitted as they don't converge in this setup of simulation. Mostly when the calibration equation contains two-way interactions.
+
+By default, the results are simulated via 1000 replications, except for coverage and relative bias.
+
+```{r}
+if(paste0(scenario,"_summary_",case,".RData") %in% list.files(getwd(), recursive = TRUE)){
+  out <- readRDS(paste0(scenario,"_summary_",case,".RData"))
+} else {
+  out <- fun.rep(x = sim_result,
+                 n = n,
+                 pre_pop = pre_pop,
+                 truey = truey,
+                 var_method = var_method,
+                 var_stratified = var_stratified)
+  saveRDS(out, paste0(scenario,"_summary_",case,".RData"))
+}
+```
+
+## Convergence Information & Error
+
+```{r}
+out_error <- out$out_error
+out_na_count <- out$out_na_count
+out_diff_from_rails <- sum(out$out_diff_from_rails)
+kable(out_error,format = "html",caption = "Convergence Information",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"))
+kable(out_na_count,format = "html",caption = "Number of NAs",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"))
+```
+
+
+## Population Prevalence
+
+```{r}
+out_pop_mean <- as.data.frame(out$out_mean)
+out_pop_mean <- out_pop_mean %>% select(!Coverage) %>% t()
+apply_row_colors(out_pop_mean,names_caption = "Population Prevalence",size = 1)
+```
+
+```{r}
+out_pop_mean <- out_pop_mean %>%
+  as.data.frame() 
+out_pop_mean <- out_pop_mean[c("Relative Bias(Mean)","Relative Bias(Median)","Avg SD","Emp SD","Median SD","MAD","TrueCoverage","Oracle Coverage","Ratio of NAs"),]
+out_pop_mean[1,] <- out_pop_mean[1,]*100
+out_pop_mean[2,] <- out_pop_mean[2,]*1e2
+out_pop_mean[3,] <- out_pop_mean[3,]*1e2
+out_pop_mean[4,] <- out_pop_mean[4,]*1e2
+out_pop_mean[5,] <- out_pop_mean[5,]*100
+out_pop_mean[6,] <- out_pop_mean[6,]*100
+
+apply_row_colors(out_pop_mean,names_caption = "Population Prevalence",size = 1)
+```
+
+
+## Subgroup Bias
+
+```{r}
+out_sub_bias <- t(out$out_sub_bias)
+out_sub_bias <- rbind(out_sub_bias,Total = colSums(out_sub_bias))
+apply_row_colors(out_sub_bias,names_caption = "Subgroup Bias",size = 1e2)
+```
+
+## Subgroup Bias Abosulte
+
+```{r}
+out_sub_absbias <- abs(t(out$out_sub_bias))
+out_sub_absbias <- rbind(out_sub_absbias,Total = colSums(out_sub_absbias))
+apply_row_colors(out_sub_absbias,names_caption = "Subgroup Bias Absolute",size = 1e2)
+```
+
+
+
+## Subgroup Bias Squared
+
+```{r}
+out_sub_bias2 <- t(out$out_sub_bias2)
+out_sub_bias2 <- rbind(out_sub_bias2,Total = colSums(out_sub_bias2))
+apply_row_colors(out_sub_bias2,names_caption = "Subgroup Bias Squared",size = 1e2)
+```
+
+## Subgroup Coverage
+
+```{r}
+out_sub_cov <- t(out$out_sub_cov)
+out_sub_cov <- rbind(out_sub_cov,Total = colMeans(out_sub_cov))
+apply_row_colors(out_sub_cov,names_caption = "Subgroup Coverage",size = 1e2)
+```
+
+## Subgroup Relative Bias
+
+```{r}
+out_sub_relbias <- sweep(out_sub_bias,2, as.numeric(pre_pop), FUN = "/")
+out_sub_relbias <- t(out_sub_relbias)
+out_sub_relbias <- rbind(out_sub_relbias,Total = colSums(out_sub_relbias))
+apply_row_colors(out_sub_relbias,names_caption = "Subgroup Relative Bias",size = 1e2)
+```
+
+
+## Subgroup Summary
+```{r}
+library(dplyr)
+library(tidyr)
+out_list <- out$out_list
+out_list$Coverage <- out_list$Coverage * 100
+out_list$variance <- out_list$variance * 1e6
+out_list$size <- out_list$size / 1e5
+
+long_df <- bind_rows(
+  lapply(names(out_list), function(m) {
+    as.data.frame(out_list[[m]]) |>
+      mutate(Method = rownames(out_list[[m]]),
+             Metric = m)
+  })
+) |>
+  pivot_longer(
+    cols = starts_with("V"),
+    names_to = "V",
+    values_to = "Value"
+  )
+tables_by_V <- split(long_df, long_df$V)
+tables_by_V_wide <- lapply(tables_by_V, function(df) {
+  df %>%
+    select(-V) %>%  # we already know the V (table name)
+    pivot_wider(names_from = Metric, values_from = Value)
+})
+
+# Example: view the wide table for V1
+
+tab_V1 <- tables_by_V_wide$V1 %>% arrange(Method)
+tab_V2 <- tables_by_V_wide$V2 %>% arrange(Method)
+tab_V3 <- tables_by_V_wide$V3 %>% arrange(Method)
+tab_V4 <- tables_by_V_wide$V4 %>% arrange(Method)
+
+kable(tab_V1 ,format = "html",caption = "Subgroup Summary for V1",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+kable(tab_V2 ,format = "html",caption = "Subgroup Summary for V2",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+kable(tab_V3 ,format = "html",caption = "Subgroup Summary for V3",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+kable(tab_V4 ,format = "html",caption = "Subgroup Summary for V4",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+```
+
+
+
+## Elapsed Time
+
+```{r}
+out_time <- out$out_time
+kable(out_time,format = "html",caption = "Elapsed Time (in seconds)",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+```
+
+## Average Size
+
+```{r}
+out_size <- out$out_size
+kable(out_size,format = "html",caption = "Average Size",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+```
+
+## Average Variable Selected
+
+```{r}
+out_vs_n <- out$out_vs_n
+out_vs_n_step <- out$out_vs_n_step
+out_vs <- cbind(VS = out_vs_n,Step = out_vs_n_step)
+kable(out_vs,format = "html",caption = "Average Variables Selected",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"),)
+```
+
+
+
+## Boxplot
+
+```{r}
+tmp <- out$out_p_all
+level_order <- out$out_level_order
+p <- ggplot(data = tmp, aes(x=Method, y=value,fill=Method))+
+    geom_violin(width = 1.2)+
+    geom_boxplot(outlier.colour="red",width = 0.5)+
+    ggtitle("Boxplot of Bias") +
+    xlab("Methods") +
+    ylab("Bias") +
+    geom_jitter(shape=16, position=position_jitter(0))+
+    stat_summary(fun="mean", geom="point", shape=23, size=4,na.rm = TRUE)+
+    stat_summary(fun="median", geom="point", shape=1, size=3,na.rm = TRUE)+
+    geom_hline(yintercept=0, linetype="dashed", color = "red")+
+    theme(legend.text = element_text(size=8),
+          legend.position="none",
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.ticks.x=element_blank()) +
+    guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+    scale_x_discrete(limits = level_order) +
+    scale_fill_discrete(breaks = level_order,labels = level_order)
+
+p
+```
+
+## Subgroup Mean Boxplot
+
+```{r}
+tmp <- out$out_p_sub_mean
+level_order <- out$out_level_order
+tmp <- do.call(rbind, lapply(seq_along(tmp), function(i) {
+  cbind(tmp[[i]], Level = i)
+}))
+tmp <- tmp %>%
+  filter(value != 0)
+
+ref_levels <- tmp %>%
+  group_by(Level) %>%
+  summarise(PopMean  = unique(PopMean), .groups = "drop")
+
+  p <- ggplot(data = tmp, aes(x=Method, y=value,fill=Method))+
+    geom_violin()+
+    geom_boxplot(outlier.colour="red")+
+    geom_hline(aes(yintercept=out$out_mean[1,1], color = "red"), linetype="dashed")+
+    geom_hline(data = ref_levels,aes(yintercept=PopMean),color = "blue", linetype="dashed") +
+    facet_wrap(~ Level, scales = "free_x", nrow = 1,
+               labeller = as_labeller(function(x) paste("Subgroup", x))) +
+    ggtitle(paste0("Boxplot of Mean for Subgroup")) +
+    xlab("Methods") +
+    ylab("Mean") +
+    geom_jitter(shape=16, position=position_jitter(0))+
+    stat_summary(fun="mean", geom="point", shape=23, size=4,na.rm = TRUE)+
+    stat_summary(fun="median", geom="point", shape=1, size=3,na.rm = TRUE)+
+    theme(legend.text = element_text(size=8),
+          legend.position="none",
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.ticks.x=element_blank()) +
+    guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+    scale_x_discrete(limits = level_order) +
+    scale_fill_discrete(breaks = level_order,labels = level_order) 
+  
+print(p)
+
+
+
+
+```
+
+## Subgroup Bias Boxplot
+
+```{r}
+tmp <- out$out_p_sub_bias
+level_order <- out$out_level_order
+
+for(i in 1:length(tmp)){
+  p <- ggplot(data = tmp[[i]], aes(x=Method, y=value,fill=Method))+
+    geom_violin()+
+    geom_boxplot(outlier.colour="red")+
+    ggtitle(paste0("Boxplot of Bias for Subgroup ",names(tmp)[i])) +
+    xlab("Methods") +
+    ylab("Bias") +
+    geom_jitter(shape=16, position=position_jitter(0))+
+    stat_summary(fun="mean", geom="point", shape=23, size=4,na.rm = TRUE)+
+    stat_summary(fun="median", geom="point", shape=1, size=3,na.rm = TRUE)+
+    geom_hline(yintercept=0, linetype="dashed", color = "red")+
+    theme(legend.text = element_text(size=8),
+          legend.position="none",
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.ticks.x=element_blank()) +
+    guides(fill=guide_legend(nrow=2,byrow=TRUE))+
+    scale_x_discrete(limits = level_order) +
+    scale_fill_discrete(breaks = level_order,labels = level_order)
+  
+  print(p)
+}
+
+
+
+```
+
+## Subgroup HeatMap
+
+```{r}
+out_list$Coverage <- out_list$Coverage / 100
+coverage_long <- out_list$Coverage |>
+  as.data.frame() |>
+  rownames_to_column("Method") |>
+  pivot_longer(
+    cols = starts_with("V"),
+    names_to = "Estimand",
+    values_to = "Coverage"
+  ) |>
+  mutate(
+    Method = factor(Method, levels = rev(level_order))
+  )
+
+ggplot(coverage_long,
+       aes(x = Estimand, y = Method, fill = Coverage)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.3f", Coverage)), size = 3) +
+  scale_fill_gradient2(
+    low  = "#EF8A62",   # muted red (under-coverage)
+    mid  = "#F7F7F7",   # near-white at nominal
+    high = "steelblue",   # muted blue (over / good)
+    midpoint = 0.7,
+    limits = c(0, 1),
+    name = "Coverage"
+  ) +
+  theme_minimal(base_size = 12)
+
+```
+
+
+
+## Histogram of selected variable
+
+### National Rails
+
+```{r}
+tmp <- out$out_model
+# count
+tmp_rails <- c()
+
+for(i in 1:n){
+  tmp_rails <- c(tmp_rails,tmp[[i]][[1]])
+}
+tab <- table(unlist(tmp_rails))
+
+# convert to data.frame
+df2 <- as.data.frame(tab, responseName="Freq")
+
+
+# Ranking
+rank_models <- vector("list", n)
+for (i in 1:n) {
+  rank_models[[i]] <- tmp[[i]][[1]]
+}
+all_elements <- unique(unlist(rank_models))
+element_ranks <- setNames(vector("list", length(all_elements)), all_elements)
+# Collect ranks for each element
+for (vec in rank_models) {
+  for (i in seq_along(vec)) {
+    element <- vec[i]
+    element_ranks[[element]] <- c(element_ranks[[element]], i)
+  }
+}
+avg_ranks <- sapply(element_ranks, mean)
+avg_ranks <- sort(avg_ranks)
+avg_rank_df <- data.frame(
+  element = names(avg_ranks),
+  avg_rank = avg_ranks
+)
+
+kable(avg_ranks,format = "html",caption = "Ranking of RAILS",align = "c")%>%
+  kable_styling(full_width = FALSE, c("striped", "condensed"))
+
+# Sort the data frame by avg_rank_df
+df2$Var1 <- factor(df2$Var1, levels = avg_rank_df$element)
+df2 <- df2[order(df2$Var1), ]
+
+# plot
+ggplot(df2, aes(x = reorder(Var1, -Freq), y = Freq)) +
+  geom_bar(stat = "identity") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+  )+
+  scale_fill_brewer(palette="Dark2")+ 
+  #scale_x_discrete(limits = avg_rank_df$element) +
+  labs(title="Rails by National totals", 
+         x="Variables", y = "Frequency") 
+```
+
+
+
+## Rails by subgroup
+
+```{r}
+# count
+n_stratified <- length(out$out_size)
+tmp_rails_subgroup_ori <-  vector("list",  n_stratified)
+tmp_rails_subgroup_final <- vector("list",  n_stratified)
+
+for(i in 1:n){
+  for(j in 1:n_stratified){
+    tmp_rails_subgroup_ori[[j]] <- c(tmp_rails_subgroup_ori[[j]],
+                                     if (is.null(tmp[[i]][[2]][[1]][[j]])) {
+                                       NA
+                                     } else {
+                                       tmp[[i]][[2]][[1]][[j]]
+                                     })
+    tmp_rails_subgroup_final[[j]] <- c(tmp_rails_subgroup_final[[j]],
+                                       if (is.null(tmp[[i]][[3]][[1]][[j]])) {
+                                         NA
+                                       } else {
+                                         tmp[[i]][[3]][[1]][[j]]
+                                       })
+  }
+}
+
+index_nonna <- lapply(tmp_rails_subgroup_ori, function(x){
+  if(all(is.na(x))){
+    return(FALSE)
+  } else {
+    return(TRUE)
+  }
+})
+
+index_sub <- 1:n_stratified
+index_sub <- index_sub[unlist(index_nonna)]
+
+# count
+count_rails_subgroup_ori <- vector("list",  length(index_sub))
+count_rails_subgroup_final <- vector("list",  length(index_sub))
+
+for(j in index_sub){
+  tab_ori <- table(unlist(tmp_rails_subgroup_ori[[j]]))
+  tab_final <- table(unlist(tmp_rails_subgroup_final[[j]]))
+  count_rails_subgroup_ori[[j]] <- append(count_rails_subgroup_ori[[j]],tab_ori)
+  count_rails_subgroup_final[[j]] <- append(count_rails_subgroup_final[[j]],tab_final)
+}
+
+### Ranking by Subgroups
+avg_rank_df_subgroup <- vector("list", n_stratified)
+for(j in index_sub){
+  rank_models <- vector("list", n)
+  for (i in 1:n) {
+    rank_models[[i]] <- tmp[[i]][[2]][[1]][[j]]
+  }
+  all_elements <- unique(unlist(rank_models))
+  element_ranks <- setNames(vector("list", length(all_elements)), all_elements)
+  # Collect ranks for each element
+  for (vec in rank_models) {
+    for (i in seq_along(vec)) {
+      element <- vec[i]
+      element_ranks[[element]] <- c(element_ranks[[element]], i)
+    }
+  }
+  avg_ranks <- sapply(element_ranks, mean)
+  avg_ranks <- sort(avg_ranks)
+  avg_rank_df_subgroup[[j]] <- data.frame(
+    element = names(avg_ranks),
+    avg_rank = avg_ranks
+  )
+}
+
+# Sort the data frame by avg_rank_df_subgroup
+for(j in index_sub){
+  df2_subgroup_ori <- as.data.frame(as.table(count_rails_subgroup_ori[[j]]), responseName="Freq")
+  df2_subgroup_final <- as.data.frame(as.table(count_rails_subgroup_final[[j]]), responseName="Freq")
+  
+  # Sort the data frame by avg_rank_df_subgroup
+  df2_subgroup_ori$Var1 <- factor(df2_subgroup_ori$Var1, levels = avg_rank_df_subgroup[[j]]$element)
+  df2_subgroup_final$Var1 <- factor(df2_subgroup_final$Var1, levels = avg_rank_df_subgroup[[j]]$element)
+  
+  # plot
+  p1 <- ggplot(df2_subgroup_ori, aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity") +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+    )+
+    scale_fill_brewer(palette="Dark2")+ 
+    scale_x_discrete(limits = avg_rank_df_subgroup[[j]]$element) +
+    labs(title=paste0("Subgroup ",names(out_size)[j],", Originally Selected by GVS"), 
+         x="Variables", y = "Frequency") 
+  
+  p2 <- ggplot(df2_subgroup_final, aes(x = Var1, y = Freq)) +
+    geom_bar(stat = "identity") +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+    )+
+    scale_fill_brewer(palette="Dark2")+ 
+    scale_x_discrete(limits = avg_rank_df_subgroup[[j]]$element) +
+    labs(title=paste0("Subgroup ",names(out_size)[j],", LIFO after GVS"), 
+         x="Variables", y = "Frequency") 
+  
+  print(p1)
+  print(p2)
+}
+
+```
+
+
+

@@ -1,0 +1,199 @@
+---
+title: "Subgroup Calibration Simulation"
+author: "Huiding Chen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r,include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyverse)
+library(survey)
+library(stringr)
+library(purrr)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+# Basic Setups
+
+This driver runs **one** experimental setting of the subgroup calibration study
+and saves the per-replicate results consumed by
+[`../../Results/Res_subgroup/subgroup_summary.Rmd`](../../Results/Res_subgroup/subgroup_summary.Rmd).
+
+## Choosing the setting
+
+`case` is a three-bit code `abc` = **(covariate dependence, outcome
+heterogeneity, non-probability sampling heterogeneity)**. Each bit toggles one
+factor across the four `z` (`catx5`) subgroups, and the code is exactly the
+suffix of the output file `X5_V12_<case>.RData`:
+
+| bit | factor | on (`1`) |
+|---|---|---|
+| 1 | covariate dependence | the covariate distributions (`p1`–`p4`) differ across `z` levels |
+| 2 | outcome heterogeneity | the outcome coefficients `alpha` differ across `z` levels |
+| 3 | sampling heterogeneity | the non-prob coefficients `gamma` differ across `z` levels |
+
+```{r}
+case     <- "010"          # <- the only line to change between settings
+scenario <- "X5_V12"
+out_dir  <- "../../Results/Res_subgroup"   # where results / truths are written
+```
+
+## Simulation parameters
+
+Coefficient banks are shared across all settings; the three-bit `case`
+selects which of them are used per subgroup (below). Each `alpha*`/`gamma*`/
+`beta` vector is `(Intercept, X1, X2, X3, X4, X1*X2, X2*X4)`.
+
+```{r}
+### Population / sample sizes and separator distribution
+seed_base <- 1
+nsiz      <- 3.34e6
+z_prob    <- c(0.15, 0.35, 0.49, 0.01)
+
+### Covariate parameters — homogeneous vs heterogeneous across the four z levels.
+### The covariate-dependence factor toggles ALL of p1..p4 together; the
+### homogeneous form is each block's level-1 value repeated across levels.
+p1_homog  <- c("1" = 0.34, "2" = 0.34, "3" = 0.34, "4" = 0.34)
+p1_hetero <- c("1" = 0.34, "2" = 0.18, "3" = 0.25, "4" = 0.47)
+
+p2_homog  <- c("1" = 0.65, "2" = 0.65, "3" = 0.65, "4" = 0.65)
+p2_hetero <- c("1" = 0.65, "2" = 0.55, "3" = 0.64, "4" = 0.55)
+
+p3_homog  <- list("1" = c(0.15, 0.35, 0.3, 0.2),  "2" = c(0.15, 0.35, 0.3, 0.2),
+                  "3" = c(0.15, 0.35, 0.3, 0.2),  "4" = c(0.15, 0.35, 0.3, 0.2))
+p3_hetero <- list("1" = c(0.15, 0.35, 0.3,   0.2),   "2" = c(0.22, 0.37, 0.245, 0.165),
+                  "3" = c(0.10, 0.24, 0.295, 0.365), "4" = c(0.27, 0.18, 0.295, 0.255))
+
+p4_homog  <- list("1" = c(0.1, 0.05), "2" = c(0.1, 0.05),   # base, slope
+                  "3" = c(0.1, 0.05), "4" = c(0.1, 0.05))
+p4_hetero <- list("1" = c(0.1, 0.05), "2" = c(0.15, 0.10),  # base, slope
+                  "3" = c(0.44, -0.08), "4" = c(0.2, 0.15))
+
+### Outcome model banks (alpha)
+alpha1 <- c(-1.25, -0.35,  0.64,  0.21, -0.54,  0.71, -0.85)
+alpha2 <- c(-1.18, -0.27,  0.76, -0.14,  0.29,  1.10, -1.13)
+alpha3 <- c(-1.44, -0.35, -0.18,  0.12, -0.42,  0.38,  0.35)
+alpha4 <- c(-1.16, -0.19,  0.48,  0.14, -0.15,  0.52, -0.77)
+
+### Non-probability (AoU) selection banks (gamma)
+gamma1 <- c(-1.55, -0.27, -0.72,  0.34, -0.94,  1.24,  1.19)
+gamma2 <- c(-1.25, -0.14, -0.74,  0.24,  0.21,  0.89, -0.69)
+gamma3 <- c(-2.25, -0.20, -0.43, -0.18, -0.56,  0.73,  0.92)
+gamma4 <- c(-1.05,  0.90,  0.42, -0.44, -0.25, -1.36, -0.65)
+
+### Probability-sample selection (shared across subgroups)
+beta <- c(-0.5, -0.05, -1.5, -0.8, -2.5, -0.03, -1.5)
+
+tolerance <- 1e-3
+names_var <- c("catx5")    # the separator z
+```
+
+```{r}
+## Assemble the per-setting parameter objects from the three-bit code.
+bits <- as.integer(strsplit(case, "")[[1]])   # c(covDep, outHet, sampHet)
+
+## Covariate dependence toggles the whole covariate block (p1..p4) at once.
+if (bits[1] == 1) {
+  p1_list <- p1_hetero; p2_list <- p2_hetero; p3_list <- p3_hetero; p4_list <- p4_hetero
+} else {
+  p1_list <- p1_homog;  p2_list <- p2_homog;  p3_list <- p3_homog;  p4_list <- p4_homog
+}
+
+alpha <- if (bits[2] == 1) {
+  list(`1` = alpha1, `2` = alpha2, `3` = alpha3, `4` = alpha4)
+} else {
+  list(`1` = alpha1, `2` = alpha1, `3` = alpha1, `4` = alpha1)
+}
+
+gamma <- if (bits[3] == 1) {
+  list(`1` = gamma1, `2` = gamma2, `3` = gamma3, `4` = gamma4)
+} else {
+  list(`1` = gamma1, `2` = gamma1, `3` = gamma1, `4` = gamma1)
+}
+
+pars <- list(p1 = p1_list, p2 = p2_list, p3 = p3_list, p4 = p4_list, z_prob = z_prob)
+```
+
+## Shared functions and simulation driver
+
+```{r}
+source("subgroup_functions.R")   # data generation, estimators, diagnostics
+source("subgroup_simfun.R")      # sim.fun (one replicate over all 8 methods)
+```
+
+## Population truths (for bias and coverage)
+
+`subpre.function` evaluates the setting on a large pseudo-population once to get
+the overall prevalence (`true_y`), the per-subgroup prevalences (`pre_pop`), and
+the calibration-margin truths (`pre_all`). Cached as CSVs next to the results.
+
+```{r}
+subpre.function <- function(nsiz, alpha, beta, gamma, pars, names_var) {
+  dt <- sample.function(seed_base, nsiz, z_prob = pars$z_prob, p1_list = pars$p1,
+                        p2_list = pars$p2, p3_list = pars$p3, p4_list = pars$p4)
+  dt <- outcome.function(dt, alpha, beta, gamma)
+  if (length(names_var) == 1) {
+    names_select <- names_var
+  } else {
+    names_select <- apply(t(combn(names_var, 2)), 1, paste, collapse = ":")
+  }
+  total_pop <- model.matrix(as.formula(paste0("~0+", paste0(names_select, collapse = "+"))), dt)
+  margin_pop <- fun.pre0(total_pop, rep(1, nrow(total_pop)), dt$y, pre_pop = 1)[2, ]
+  as.numeric(c(overall = mean(dt$y), margin_pop))
+}
+
+pre_pop_file <- file.path(out_dir, paste0("pre_pop_", scenario, "_", case, ".csv"))
+pre_all_file <- file.path(out_dir, paste0("pre_all_", scenario, "_", case, ".csv"))
+
+if (file.exists(pre_pop_file)) {
+  pre_pop <- read.csv(pre_pop_file)
+} else {
+  pre_pop <- subpre.function(nsiz = 1e7, alpha, beta, gamma, pars, names_var)
+  write.csv(pre_pop, pre_pop_file)
+}
+if (file.exists(pre_all_file)) {
+  pre_all <- read.csv(pre_all_file)
+} else {
+  pre_all <- subpre.function(nsiz = 1e7, alpha, beta, gamma, pars,
+                             names_var = c("catx1", "catx2", "catx3", "catx4", "catx5"))
+  write.csv(pre_all, pre_all_file)
+}
+
+# subpre.function returns a bare numeric vector when computed fresh, or a
+# 2-column data.frame when read back from CSV; normalize to the vector form.
+as_truth <- function(x) if (is.data.frame(x)) as.numeric(x[, 2]) else as.numeric(x)
+true_y  <- as_truth(pre_pop)[1]
+pre_pop <- as_truth(pre_pop)[-1]
+pre_all <- as_truth(pre_all)[-1]
+```
+
+# Running the simulation
+
+On ACCRE the replicate loop is `foreach(seed = 1:1e3) %dopar% sim.fun(...)`,
+where `seed` gives each parallel worker an independent draw. Locally the serial
+`lapply(seq_len(n), ...)` below passes the same `seed = 1..n` into
+`sim.fun` (feeding `sample.function`'s RNG), so it reproduces the cluster runs
+without needing MPI. Results cache to `X5_V12_<case>.RData`.
+
+```{r}
+n <- 1000
+res_file <- file.path(out_dir, paste0(scenario, "_", case, ".RData"))
+
+if (file.exists(res_file)) {
+  sim_result <- readRDS(res_file)
+} else {
+  sim_result <- lapply(seq_len(n), function(s) {
+    suppressWarnings(
+      sim.fun(s, nsiz, alpha, beta, gamma, pars, names_var,
+              pre_pop, true_y, tolerance = tolerance))
+  })
+  saveRDS(sim_result, res_file)
+}
+```
+
+Once every `case` has been run, knit
+[`../../Results/Res_subgroup/subgroup_summary.Rmd`](../../Results/Res_subgroup/subgroup_summary.Rmd)
+(setting its `case` to match) to produce the tables and figures, and
+`Heat.R` for the cross-setting coverage heatmap.

@@ -4,7 +4,7 @@ Applies the RAILS methodology **within levels of a subgroup variable** (e.g. sex
 
 Script numbering continues the Global RAILS sequence: steps 1–8 live in [Global RAILS](../Global%20RAILS/README.md), and this folder is **step 9**, run after the Global RAILS pipeline has produced the aggregated cell tables.
 
-> **Run inside the AoU Researcher Workbench.** Copy `AoU_Fun.R` from `../Global RAILS/RAILS Procedure/` into the same directory — the scripts here load it via `source("AoU_Fun.R")`.
+> **Run inside the AoU Researcher Workbench.** Copy **both** `Sub_AoU_Fun.R` and `AoU_Fun.R` (from `../Global RAILS/RAILS Procedure/`) into the same directory — the scripts here `source("Sub_AoU_Fun.R")`, which in turn sources `AoU_Fun.R`.
 
 ---
 
@@ -12,22 +12,20 @@ Script numbering continues the Global RAILS sequence: steps 1–8 live in [Globa
 
 | File | Description |
 |---|---|
-| `Sub_AoU_Fun.R` | `fun.sub.rails.threeway` — runs **every level** of a subgroup variable in one call |
-| `09_Sub_RAILS.R` | Runs **one stratum**, set via `SUB_VAR` / `SUB_LEVEL` at the top of the script |
+| `Sub_AoU_Fun.R` | `fun.sub.rails.threeway` — runs the RAILS procedure within **each level** of a subgroup variable and row-binds the results |
+| `09_Sub_RAILS_sex.R` | Subgroup by **sex**, restricted to the **Female** stratum (breast cancer study) |
+| `09_Sub_RAILS_region.R` | Subgroup by **Census region**, all four regions compared side by side |
 
-### Which one to use
+Both scripts source `Sub_AoU_Fun.R`, drop the subgroup variable from the model (it is constant within a stratum), and scale each subgroup's weights to that subgroup's **own** PUMS total. They differ only in the subgroup variable and whether the data is pre-filtered:
 
-- **One stratum of interest** (e.g. females only, for a breast cancer analysis) → `09_Sub_RAILS.R`. Change the three settings lines and re-run; nothing else in the script is subgroup-specific.
-- **Every level at once** (e.g. all four Census regions, compared side by side) → `fun.sub.rails.threeway` from `Sub_AoU_Fun.R`, which loops the levels and row-binds the results with a `subgroup_run` tag.
+| | `09_Sub_RAILS_sex.R` | `09_Sub_RAILS_region.R` |
+|---|---|---|
+| `subgroup_var` | `"sex"` | `"region"` |
+| `names_univar` | 6 vars incl. `region`, excl. `sex` | 6 vars incl. `sex`, excl. `region` |
+| Pre-filter | yes → `sex == "Female"` (one level) | no → runs all four regions |
+| Output | `dt_sub_aou_sex_female.csv` | `dt_sub_aou_region.csv` |
 
-Both scale weights to the **subgroup's own** PUMS total and drop the subgroup variable from the model, since it is constant within the stratum.
-
-```r
-## 09_Sub_RAILS.R — the only lines to change between analyses
-SUB_VAR   <- "sex"        # or "region", "race_eth", ...
-SUB_LEVEL <- "Female"     # or "South", "NH Black", ...
-OUT_FILE  <- "dt_sub_aou_femaleonly.csv"
-```
+To run **both** sexes instead of female-only, drop the `filter(sex == "Female")` lines in `09_Sub_RAILS_sex.R` and pass the full tables — the wrapper then loops both levels, exactly like the region script.
 
 ---
 
@@ -67,10 +65,13 @@ result_sub %>%
 
 ---
 
-## Single-Stratum Script (`09_Sub_RAILS.R`)
+## The two analysis scripts
 
-Loads the aggregated tables and the individual-level AoU data, filters all three to `SUB_VAR == SUB_LEVEL`, drops the subgroup variable from `names_univar`, builds the subgroup's margins, calls `fun.rails.threeway` directly, joins the weights back to participants, and saves.
+Both load the aggregated tables + individual-level AoU data, harmonize factors, call `fun.sub.rails.threeway`, join the per-individual weights back to participants (by the model covariates, plus `region` for the region run), and save. The individual join key differs:
 
-The script reports the subgroup's cell count, participant count, and `nsiz` before the fit — worth checking before a long selection run, since small strata are where sparse cells cause early LIFO stops.
+- **`09_Sub_RAILS_sex.R`** joins on the 6 covariates only (data already female).
+- **`09_Sub_RAILS_region.R`** joins on the 6 covariates **plus `region`**, since each participant matches their own region's cell.
 
-**Small-subgroup caveat:** with fewer cells per stratum, empty AoU margins are more common than in the global run — expect more skipped selection candidates and earlier stopping, all reported via warnings and `calibrated_terms`.
+**Small-subgroup caveat:** with fewer cells per stratum, empty AoU margins are more common than in the global run — expect more skipped selection candidates and earlier LIFO stopping, all reported via warnings and `calibrated_terms`.
+
+**Region-joints caveat:** the region run calibrates within each region using the **aggregated** `dt_agg_pums`, so its correctness depends on that file's *within-region* joint distributions being right. If you suspect residual region-joint distortion in the aggregated PUMS, calibrate region from **by-state** individual PUMS instead (state → region map) — that was the motivation behind the earlier by-state region variant.
