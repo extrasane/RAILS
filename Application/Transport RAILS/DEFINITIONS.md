@@ -1,6 +1,8 @@
 # Transport RAILS: Data, Populations and Preprocessing
 
-Formal definitions for the preliminary analysis (`T01_Transport_VEHSS_region.R`). Everything here describes what the code **actually does**, traced to the stage-1 / stage-2 code of `../Subgroup RAILS/VEHSS_comparison*.R` and to T01.
+Formal definitions for the preliminary analysis (`T01_Transport_VEHSS_region.R`). Everything here describes what the code **actually does**, traced to the stage-1 / stage-2 code of `../Sub_VEHSS/VEHSS_comparison*.R` and to T01.
+
+> **Preliminary.** The definition discrepancies between AoU, PUMS and VEHSS documented here (§7) are a recent, still immature discovery. Only the region map has been aligned so far (official Census regions, §4.4); age group and age rounding, multiracial coding, income adjustment and group quarters are known to differ and have not been harmonized or re-run. Results before and after any such change are not comparable; expect further changes.
 
 **Notation follows the Subgroup RAILS manuscript** (`full_text.tex`, §2.1 Notations and §4 Application). Symbols that the manuscript does not have are marked **(new)**. §6 defines every diagnostic; §7 lists preprocessing issues found while writing this down.
 
