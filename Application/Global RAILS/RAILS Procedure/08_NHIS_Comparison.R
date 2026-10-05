@@ -270,9 +270,9 @@ nsiz <- sum(raking.wts$w_rails)
 raking.wts <- raking.wts %>%
   select(person_id, w_rails)
 
-south     <- c("AL","AR","FL","GA","KY","LA","MS","NC","SC","TN","TX","VA","WV")
+south     <- c("AL","AR","DC","DE","FL","GA","KY","LA","MD","MS","NC","OK","SC","TN","TX","VA","WV")  # official Census (PUMS REGION): + DC, DE, MD, OK
 midwest   <- c("IL","IN","IA","KS","MI","MN","MO","NE","ND","OH","SD","WI")
-northeast <- c("CT","DE","ME","MD","MA","NH","NJ","NY","PA","RI","VT")
+northeast <- c("CT","ME","MA","NH","NJ","NY","PA","RI","VT")  # official Census: DE, MD moved to South
 west      <- c("AK","AZ","CA","CO","HI","ID","MT","NV","NM","OR","UT","WA","WY")
 state_region_map <- c(
   setNames(rep("South",     length(south)),     south),

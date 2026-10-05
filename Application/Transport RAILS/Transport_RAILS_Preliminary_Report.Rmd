@@ -1,0 +1,365 @@
+---
+title: "Transportability of RAILS Calibration Weights across Census Regions"
+subtitle: "Preliminary results from the All of Us Researcher Workbench, validated against CDC VEHSS"
+author: "Huiding Chen"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    self_contained: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", out.width = "100%")
+fig <- function(f) knitr::include_graphics(file.path("figures", f))
+```
+
+<style>
+.caution { background: #f7f5ef; border-left: 4px solid #b58a00; padding: 0.6em 1em; margin: 1em 0; }
+.keypoint { background: #eef4fb; border-left: 4px solid #2a78d6; padding: 0.6em 1em; margin: 1em 0; }
+table { font-size: 0.92em; }
+</style>
+
+# Summary {-}
+
+This report presents preliminary results on whether **RAILS calibration weights constructed from All of Us (AoU) participants in one set of Census regions can be transported to another region**. For each target region $a$, three AoU source samples were calibrated to the same regional population margins: the within-region, all-region and out-of-region samples. Each source yields a RAILS estimate, labelled S-RAILS, P-RAILS and T-RAILS respectively. The weighted prevalences of three eye conditions were then compared with each other and with regional benchmarks from the CDC Vision and Eye Health Surveillance System (VEHSS).
+
+<div class="keypoint">
+**Principal observations (preliminary; see the cautions in §6.8 and §7):**
+
+1. **Calibration achieved close covariate balance for all three sources.** This includes balance on features that were *not* calibration constraints (the full six-way covariate distribution and detailed age).
+2. **The transport contrast is non-negligible.** $\Delta^a_j$ = T-RAILS − S-RAILS is small in absolute terms for AMD and glaucoma (mostly within ±3 percentage points), but often large relative to S-RAILS. For cataract it is large in both senses (−14.5 to +18.2 percentage points).
+3. **The contrast tracks concept shift.** Its sign is consistent across outcomes within a region. Its magnitude closely tracks an estimate of concept shift, i.e. a difference in the outcome distribution *given* the covariates between AoU participants inside and outside the target region. Residual covariate imbalance does not appear to explain it.
+4. **Agreement with VEHSS does not favour the within-region source.** For glaucoma, P-RAILS agreed most closely with VEHSS and S-RAILS least closely. For cataract, the three sources had similar average errors, with S-RAILS marginally the largest. For AMD, no source agreed with VEHSS; this reflects a difference in case definition rather than in weighting.
+5. **A tentative explanation.** Taken together, these observations are consistent with *region-specific differences in how conditions are recorded in AoU electronic health records*, rather than with true regional differences in disease. This is a hypothesis that the present analysis cannot establish.
+</div>
+
+# Background and objectives
+
+The Subgroup RAILS manuscript compares calibration performed globally (G-RAILS) with calibration performed within subgroups (S-RAILS). Both use the subgroup's own participants. The present study asks a complementary question: **how do estimates change when a region's population is represented by participants who do not live in it?** This is the *transportability* setting of the generalizability literature, as opposed to *generalizability*, where the sample is drawn from the target population (Degtiar & Rose, 2023). In domain-adaptation terms, calibration corrects *covariate shift*, a difference in $P(\boldsymbol X)$. It cannot correct *concept shift*, a difference in $P(Y \mid \boldsymbol X)$ (Moreno-Torres et al., 2012).
+
+| # | Question | Main comparison |
+|---|---|---|
+| Q1 | Does transporting participants from other regions perform worse than generalizing the region's own participants? | T-RAILS vs S-RAILS |
+| Q2 | Does pooling all participants help or harm? | P-RAILS vs S-RAILS |
+| Q3 | Which measurable features are associated with successful transport? | Error vs overlap, effective sample size, concept shift |
+| Q4 | How sensitive are the conclusions to analytic choices? | Methods, trimming, outcomes, age domains |
+
+# Data, notation and estimands
+
+The notation follows the Subgroup RAILS manuscript. Full definitions, including every preprocessing step, are in `DEFINITIONS.md`.
+
+## Populations and samples
+
+| Symbol | Definition |
+|---|---|
+| $\mathscr U$, $N$ | US residents aged 40+ in the 50 states (DC excluded) |
+| $z$, $a \in \mathscr Z$ | Census region of residence; $\mathscr Z = \{\text{NE}, \text{MW}, \text{S}, \text{W}\}$ |
+| $\mathscr U^a$, $N^a$ | **Target population**: residents aged 40+ of region $a$ |
+| $\mathscr U_B$, $d_i^B$ | Probability sample: ACS 2022 1-year PUMS, persons aged 40+ with complete covariates; weights rescaled to $N$ |
+| $\mathscr U_A$ | Non-probability sample: AoU participants with EHR data, aged 40+ on 2024-08-01, with a mapped state of residence and complete covariates |
+| $\boldsymbol X$ | Age group (40-64, 65-84, 85+), sex, education, home ownership, household income, race/ethnicity |
+| $\boldsymbol T^{pop,a}$ | One-, two- and three-way totals of $\boldsymbol X$ in $\mathscr U^a$, estimated from $\mathscr U_B^a$ with $d_i^B$ |
+| $y_{ij}$ | Outcome $j$: at least two distinct EHR dates with a code of the PhecodeX phecode (AMD SO_374.51, glaucoma SO_375.1, cataract SO_371) |
+
+## Source samples
+
+| Source $\mathscr S$ | Name | Relation to $\mathscr U^a$ | RAILS estimate |
+|---|---|---|---|
+| $\mathscr U_A^a$ | Within-region | drawn from the target | **S-RAILS** (generalization) |
+| $\mathscr U_A$ | All-region | contains the target's participants and all others | **P-RAILS** (pooled) |
+| $\mathscr U_A^{-a} = \mathscr U_A \setminus \mathscr U_A^a$ | Out-of-region | disjoint from the target | **T-RAILS** (transport) |
+
+All three sources are calibrated to the **same** targets $\boldsymbol T^{pop,a}$ and weight total $N^a$, using the RAILS procedure of the manuscript (three-way, with a two-way fallback). Region is excluded from $\boldsymbol X$ because it is constant in $\mathscr U^a$.
+
+P-RAILS differs from the manuscript's G-RAILS:
+- **G-RAILS** calibrates $\mathscr U_A$ once to national targets that include region, and averages only over $\mathscr U_A^a$.
+- **P-RAILS** calibrates $\mathscr U_A$ to region $a$'s targets, and every participant contributes.
+
+## Estimand, estimator and contrast
+
+$$\mu^a_j = \frac{1}{N^a}\sum_{i\in\mathscr U^a} y_{ij}, \qquad
+\widehat\mu^a_j(\mathscr S) = \frac{\sum_{i\in\mathscr S}\widehat w^A_i(\mathscr S\to a)\,y_{ij}}{\sum_{i\in\mathscr S}\widehat w^A_i(\mathscr S\to a)}, \qquad
+\Delta^a_j = \widehat\mu^a_j(\mathscr U_A^{-a}) - \widehat\mu^a_j(\mathscr U_A^{a}).$$
+
+**What T-RAILS requires.** Consistency of T-RAILS additionally requires $E[y_{ij}\mid \boldsymbol x, z=a] = E[y_{ij}\mid \boldsymbol x, z\neq a]$, i.e. the absence of concept shift across regions.
+
+**Why the contrast avoids the benchmark problem.** The contrast $\Delta^a_j$ involves no external benchmark. Absolute comparisons with VEHSS, by contrast, are affected by differences between the AoU and VEHSS case definitions, which are discussed next.
+
+## External benchmark (VEHSS)
+
+| Outcome | VEHSS quantity | Year | Denominator | Domains compared |
+|---|---|---|---|---|
+| AMD | Modeled prevalence of any AMD, diagnosed or not | 2019 | Residents | 40+, 40-64, 65+ |
+| Glaucoma | Modeled prevalence | 2022 | Residents | 40+, 40-64, 65+ |
+| Cataract | Diagnosed in Medicare FFS + Advantage claims | 2022 | Medicare beneficiaries | 65+ only |
+
+State estimates were aggregated to regions using the implied state populations (cases / prevalence). No standard errors are available for the regional benchmarks. **VEHSS does not measure the AoU estimand $\mu^a_j$.** The difference between the two definitions is common to all three sources within a region, outcome and age domain.
+
+# Roadmap
+
+The full roadmap is in `ROADMAP.md`. The preliminary run implements the design end to end with data already available in the Workbench.
+
+| Phase | Content | Preliminary run (T01) |
+|---|---|---|
+| 0. Definitions | Target population, covariates, outcomes, harmonization | 40+, six covariates, three PhecodeX eye outcomes |
+| 1. Data | PUMS margins, benchmarks, AoU sources | Reuses the VEHSS stage-1/2 files; VEHSS benchmarks |
+| 2. Overlap | Support and distributional overlap before weighting | Empty-cell share, two-way sparsity, c-statistic |
+| 3. Weighting | Several methods, same targets | Unweighted, one-/two-way raking, NPS + raking, RAILS, trimmed RAILS |
+| 4. Diagnostics | ESS, weight variability, non-calibrated balance | ESS, CV, joint-cell TVD, age SMD |
+| 5. Benchmarking | Absolute / relative difference, ratio, CI, coverage | Implemented, with naive CIs |
+| 6. Synthesis | Contrasts across sources; predictors of transport error | Contrasts, concept-shift proxy, exploratory correlations |
+| 7. Sensitivity | Methods, calibration sets, trimming, benchmarks, harmonization | Methods and trimming only |
+
+**Open items for the full study:**
+- add benchmarks for self-reported outcomes (NHIS, BRFSS), with standard errors;
+- consider states as targets, which provides more units for Q3;
+- adopt a bootstrap variance that includes model selection;
+- add a measure of EHR completeness;
+- correct the preprocessing issues listed in Appendix A.
+
+# Instructions for reproduction
+
+1. **Prerequisites (Workbench).** The stage-1 and stage-2 outputs of the `VEHSS_comparison*.R` scripts must exist in `../data/`:
+   - `vehss_aou_40plus.csv`, `vehss_glaucoma_aou_40plus.csv`, `vehss_cataract_aou_40plus.csv`;
+   - `vehss_pums_2022_bystate_40plus.csv`;
+   - the `VEHSS_<OUTCOME>_{overall,combinations}.csv` tables produced by `VEHSS_data_eye.R`.
+2. **Files to upload to one folder:**
+   - `T01_Transport_VEHSS_region.R` (`Application/Transport RAILS/`);
+   - `Sub_AoU_Fun.R` (`Application/Subgroup RAILS/`);
+   - `AoU_Fun.R` (`Application/Global RAILS/RAILS Procedure/`).
+
+   `Sub_AoU_Fun.R` is sourced with `chdir = TRUE`, as in the VEHSS scripts.
+3. **Run** `source("T01_Transport_VEHSS_region.R")`. The twelve calibrations (4 regions × 3 sources) take approximately 20 minutes.
+4. **Re-drawing.** To redraw the tables and figures without refitting, set `SKIP_IF_CACHED <- TRUE`. Cached files from earlier runs that use the former labels are translated automatically.
+5. **Outputs.**
+   - `../data/transport_*.csv`: fit log, overlap, weight diagnostics, estimates, contrasts, summary, heterogeneity, predictors;
+   - `../graph/transport_fig*.png`.
+
+   `transport_cells.csv` contains cell counts and must remain in the Workbench.
+
+# Results
+
+**How to read the numbers.** The figures are from the Workbench run. Numerical values quoted below are read from the figures and are therefore approximate; exact values are in the corresponding CSV files.
+
+## Estimates by source sample (Figure 1)
+
+```{r}
+fig("fig1_estimates.webp")
+```
+
+**Figure 1.** Weighted prevalence by source sample and target region. The black tick marks VEHSS. The open dot is the unweighted source sample; the filled dot with bar is the RAILS estimate with its naive 95% CI.
+
+**AMD.**
+- All three sources lie far below VEHSS in every region and age domain: roughly 0.1–6% against 7–25%.
+- Calibration moves the estimates only slightly.
+- The gap is therefore attributable predominantly to the difference in case definition rather than to the weighting. VEHSS models any AMD, including undiagnosed early disease; AoU counts coded diagnoses.
+
+**Glaucoma.**
+- P-RAILS is close to VEHSS in all regions and domains; calibration moved the unweighted all-region estimate toward VEHSS.
+- T-RAILS is close in most regions.
+- S-RAILS deviates in both directions: above VEHSS in the Northeast and Midwest, below it in the South and West. Its confidence intervals are noticeably wider.
+
+**Cataract (65+).**
+- All estimates lie below the Medicare benchmark (about 35–40%).
+- S-RAILS varies markedly across regions, from about 14% in the West to about 35% in the Midwest, whereas VEHSS varies little.
+- P-RAILS is nearly constant across regions (about 25%).
+- T-RAILS mirrors S-RAILS: it is lowest where the remaining regions have low within-region values (Midwest target, about 20%) and highest where they include the Midwest (West target, about 32%).
+
+## Agreement with VEHSS on the ratio scale (Figure 2)
+
+```{r}
+fig("fig2_ratio_to_vehss.webp")
+```
+
+**Figure 2.** Prevalence ratio, AoU / VEHSS, on a log scale. A value of 1 indicates agreement.
+
+On the ratio scale the three outcomes separate clearly:
+- **AMD:** ratios of approximately 1/8 to 1/4 for 40+ and 65+, and of 1/128 to 1/16 for 40-64.
+- **Glaucoma:** ratios near 1 for P- and T-RAILS.
+- **Cataract:** ratios between approximately 0.4 (S-RAILS, West) and 0.9.
+
+The magnitude of the AMD discrepancy, together with its insensitivity to weighting, indicates that **AMD cannot be used to assess weighting accuracy against VEHSS**. It remains informative for the benchmark-free contrasts.
+
+## Transport contrast (Figures 3 and 3b)
+
+```{r}
+fig("fig3_transport_shift_heatmap.png")
+```
+
+**Figure 3.** T-RAILS − S-RAILS (left) and P-RAILS − S-RAILS (right), in percentage points. No benchmark is involved.
+
+```{r}
+fig("fig3b_transport_shift_relative.png")
+```
+
+**Figure 3b.** The same contrasts expressed relative to S-RAILS (%).
+
+In absolute terms, $\Delta^a_j$ is modest for AMD and glaucoma (−3.3 to +2.3 percentage points). For cataract it is large: −3.9 (Northeast), −14.5 (Midwest), +3.8 (South) and +18.2 (West).
+
+**Relative magnitude.** Relative to S-RAILS, the contrasts are substantial for every outcome:
+- **Midwest:** about −28% to −59%;
+- **South:** about +18% to +31%;
+- **West:** about +61% to +135%, and +736% for AMD 40-64, where S-RAILS is close to zero and the ratio is correspondingly unstable.
+
+**Sign pattern.** The sign of $\Delta^a_j$ is the same across all outcomes and age domains within the Midwest (negative), the South and the West (positive). In the Northeast it is predominantly negative, with small positive values for AMD 40+ and 65+. A common sign across three distinct conditions is more naturally explained by a region-level factor affecting the recording of all conditions than by condition-specific epidemiology. This interpretation remains a hypothesis (§7).
+
+**P-RAILS.** P-RAILS − S-RAILS has the same sign as $\Delta^a_j$ and is roughly one-half to three-quarters of its magnitude. This is consistent with P-RAILS being approximately a mixture of the within- and out-of-region estimates, in which most of the calibrated weight falls on out-of-region participants.
+
+## Method comparison against VEHSS (Figure 4)
+
+```{r}
+fig("fig4_method_summary.webp")
+```
+
+**Figure 4.** Mean absolute relative error against VEHSS by weighting method and source sample. Averages are taken over the region × age-domain comparisons in which all three sources have an estimate.
+
+**AMD.** All methods and sources have relative errors near 90%. The differences among them are immaterial.
+
+**Glaucoma.**
+- RAILS: P-RAILS about 6%, T-RAILS about 12%, S-RAILS about 25%.
+- Unweighted: about 10%, 12% and 24% respectively.
+- Calibration therefore improved the all-region estimate but not the within-region one.
+- Trimming reduced the S-RAILS error to about 21%, which suggests that extreme weights contribute to its variability.
+
+**Cataract.**
+- RAILS: T-RAILS about 32%, P-RAILS about 34%, S-RAILS about 35%.
+- The averages are close and depend on individual regions (Figure 1). For example, T-RAILS performs well for the West and poorly for the Midwest.
+- **The ordering among the three sources for cataract should not be regarded as established.**
+
+**Two-way raking** (`rake2`) is absent: for at least one source in every comparison, raking from equal weights to all two-way margins failed to converge. This should be examined in `transport_weight_diag.csv`.
+
+## Overlap and the cost of weighting (Figure 5)
+
+```{r}
+fig("fig5_diagnostics.webp")
+```
+
+**Figure 5.** Overlap before weighting (top left and centre), the cost of weighting (top right, bottom left) and balance on non-calibrated features (bottom centre and right).
+
+**Distributional overlap.**
+- The c-statistic is the AUC of a model distinguishing target-region PUMS records from source participants on $\boldsymbol X$. It lies between about 0.77 and 0.81 for all region × source combinations.
+- Each AoU source is therefore clearly distinguishable from the target population before weighting, reflecting AoU's overall selection.
+- The out-of-region source is only modestly more distinguishable than the within-region source, and only for the Midwest (about 0.80 vs 0.78) and the West (about 0.81 vs 0.77). For the Northeast and South the values are similar.
+
+**Support.** This is the share of the target population in covariate cells that occur in PUMS but contain no participant of the source sample.
+
+| Target | Within-region | All-region | Out-of-region |
+|---|---|---|---|
+| Northeast | ≈ 4.2% | ≈ 2.0% | ≈ 2.2% |
+| Midwest | ≈ 3.0% | ≈ 1.0% | ≈ 1.1% |
+| South | ≈ 4.6% | ≈ 1.5% | ≈ 1.7% |
+| West | ≈ 4.0% | ≈ 3.0% | ≈ 4.4% |
+
+The within-region source, being smaller, leaves more of the target unsupported. The West is the exception: its population contains covariate combinations that are rare among AoU participants elsewhere.
+
+**Effective sample size and weight variability.**
+- ESS is roughly 6,000–11,000 for the within-region source.
+- For the all- and out-of-region sources it is roughly 23,000–48,000 in the Northeast, Midwest and South.
+- The West is the exception: the all-region source has ESS ≈ 12,000. The out-of-region source has ESS ≈ 5,400, comparable to the within-region source, and the largest weight CV observed (≈ 5.8).
+- **Transport to the West therefore relies on a comparatively small number of heavily weighted participants.**
+
+**Balance on non-calibrated features.**
+- The mismatch over all six-way covariate cells (total variation distance) decreases from about 0.40–0.46 to 0.05–0.13 after RAILS.
+- The standardized mean difference in age falls from about 0.11–0.26 to 0.05–0.10.
+- Neither quantity was a calibration constraint, so the reductions indicate genuine improvement in balance. Residual imbalance is small and similar across sources.
+
+## Concept shift (Figure 6)
+
+```{r}
+fig("fig6_shift_vs_heterogeneity.webp")
+```
+
+**Figure 6.** Transport contrast (y-axis) against the concept-shift proxy (x-axis). The proxy is the target-population average of the difference between outcome models fitted to out-of-region and within-region participants. Filled markers indicate a significant likelihood-ratio test of region × covariate interactions.
+
+**The points lie close to the identity line for all three outcomes,** and the majority of likelihood-ratio tests are significant (the exceptions are mainly in the 40-64 domain). Read together with the balance results above, this indicates that **$\Delta^a_j$ arises predominantly from concept shift**: AoU participants with the same covariates have different recorded outcome rates depending on their region. It does not arise from residual covariate imbalance. The largest departures from the identity line, glaucoma 65+ in the Midwest and Northeast, occur where the within-region samples are smallest.
+
+<div class="caution">
+**Caution.** The contrast and the proxy are estimated from the same AoU data, so their agreement is partly expected by construction. Figure 6 characterizes the *nature* of the contrast; it does not establish which source is closer to the true prevalence.
+</div>
+
+## Error, precision and overlap (Figure 7)
+
+```{r}
+fig("fig7_error_vs_ess_overlap.png")
+```
+
+**Figure 7.** Relative error of RAILS against VEHSS versus effective sample size (left) and the c-statistic (right), one row per outcome.
+
+**Glaucoma.** Relative error tends to be larger at smaller ESS. This pattern is driven largely by the within-region source.
+
+**AMD and cataract.** No consistent association is apparent.
+
+**C-statistic.** No association is apparent for any outcome.
+
+**Interpretation.** ESS is nearly collinear with the source type: the within-region source always has the smallest ESS. The figure therefore cannot separate the effect of precision from that of the source itself. With approximately 30 correlated points per outcome, these associations are descriptive only.
+
+## Overall interpretation and cautions
+
+**Q1 (transport vs generalization).**
+- Transport changes the estimates, often materially. The change is consistent with concept shift across regions rather than with imperfect covariate adjustment.
+- Against VEHSS, however, transport did not perform worse than generalization. For glaucoma it performed better; for cataract the sources were comparable.
+- The data therefore do not support the presumption that the within-region source is the preferable reference.
+
+**Q2 (pooling).**
+- P-RAILS showed the closest agreement with VEHSS for glaucoma, and intermediate agreement for cataract.
+- Because P-RAILS uses predominantly out-of-region participants, its regional estimates vary little and reflect mainly differences in covariate composition.
+
+**A candidate explanation.** The between-region variation of S-RAILS is much larger than that of the benchmark, particularly for cataract, where the benchmark is a near-complete count of claims. This suggests that within-region AoU estimates contain a **region-specific component of outcome ascertainment** (for example, differences in EHR completeness or coding practice among participating health systems). Out-of-region and pooled sources average this component across regions.
+
+<div class="caution">
+**The following limitations apply to all conclusions:**
+
+1. **Inference.** The CIs are naive linearized intervals that ignore calibration and model selection. No uncertainty is attached to $\Delta^a_j$. Small contrasts (below about 1 percentage point) may not be distinguishable from sampling variability.
+2. **Benchmark validity.** VEHSS estimates for AMD and glaucoma are model-based, derived largely from demographic composition. Close agreement of P- or T-RAILS with these benchmarks may partly reflect a shared assumption of no regional concept shift, rather than accuracy. Cataract, benchmarked against claims, provides the more informative comparison.
+3. **Number of units.** There are four regions, three outcomes and overlapping age domains (40+ contains 40-64 and 65+). The comparisons are not independent, and Q3 cannot be addressed inferentially.
+4. **Ascertainment hypothesis.** The explanation in terms of regional recording differences is not tested here; it requires a measure of EHR completeness.
+5. **Preprocessing.** Several harmonization issues (Appendix A) affect the calibration targets. Their impact is expected to be modest but has not been quantified.
+6. **Region map.** It follows the existing pipeline (DE and MD in the Northeast; DC excluded) rather than the official Census definition.
+</div>
+
+# Next steps
+
+1. **Quantify uncertainty.** Bootstrap the full RAILS procedure, including selection, within each source, to obtain intervals for $\widehat\mu^a_j(\mathscr S)$ and $\Delta^a_j$.
+2. **Test the ascertainment hypothesis.** Construct a measure of EHR depth (for example, years with recorded encounters or any eye-care contact) and examine whether including it in $\boldsymbol X$ attenuates $\Delta^a_j$.
+3. **Strengthen the external validation.** Prioritize cataract (claims-based benchmark). Add self-reported outcomes with survey benchmarks that have known standard errors (NHIS by region, BRFSS by state).
+4. **Correct the preprocessing issues** in Appendix A and regenerate the stage files.
+5. **Add G-RAILS** as a fourth reference column, linking these results to the S- versus G-RAILS comparison of the manuscript.
+6. **Investigate the failure of two-way raking** in the method comparison.
+
+# Appendix A. Preprocessing issues identified {-}
+
+| # | Issue | Effect |
+|---|---|---|
+| 1 | AoU age is rounded rather than floored | Participants aged 39.5–39.99 are included; age-group boundaries shift by half a year |
+| 2 | Multiracial persons are coded differently (PUMS: White/Black/Asian "alone or in combination", assigned in that order; AoU: "more than one" → Others) | Race/ethnicity margins of $\boldsymbol T^{pop,a}$ are not fully comparable with the AoU coding |
+| 3 | Group-quarters residents are excluded only implicitly (missing income/tenure), while the population total includes them | The targets describe the household population |
+| 4 | PUMS household income is not adjusted by `ADJINC` | Minor misclassification at income-band boundaries |
+| 5 | Reference dates differ (AoU age 2024, PUMS 2022, VEHSS 2019/2022) | Contributes to the definitional gap |
+| 6 | AMD is ascertained from `condition_occurrence` only; glaucoma and cataract also from `observation` | Ascertainment differs by outcome |
+| 7 | The sample is restricted to participants with EHR data | EHR completeness may vary by region (see §6.8) |
+
+# Appendix B. Diagnostic definitions {-}
+
+| Quantity | Definition |
+|---|---|
+| c-statistic | AUC of a logistic model ($\boldsymbol X$ main effects + two-way terms) distinguishing $\mathscr U_B^a$ (weights $d_i^B$) from the source sample, each class weighted to total 1; computed before weighting. 0.5 = identical covariate distributions |
+| Unsupported share | Share of $N^a$ in covariate cells (2,250 combinations of $\boldsymbol X$) that occur in $\mathscr U_B^a$ but contain no participant of the source |
+| ESS | Kish effective sample size, $(\sum \widehat w_i)^2 / \sum \widehat w_i^2$ |
+| Weight CV | Standard deviation / mean of the per-person weights |
+| Joint-cell TVD | $\tfrac12\sum_c \lvert p_{\mathscr S}(c) - p_{\mathscr U_B^a}(c)\rvert$ over all covariate cells |
+| Age SMD | (weighted mean age of the source − target mean age) / target SD of age |
+| Concept-shift proxy | $\sum_c N^a(c)\,[\widehat m_{-a}(c) - \widehat m_a(c)] / N^a$, with outcome models fitted to $\mathscr U_A^{-a}$ and $\mathscr U_A^a$ |
+
+# References {-}
+
+- Chen, H. et al. RAILS: Raking-Assisted Integration of Linked Surveys (Global RAILS manuscript) and Subgroup RAILS manuscript (in preparation).
+- Dahabreh, I. J. et al. (2021). Generalizing trial evidence to target populations in non-nested designs. *Journal of the Royal Statistical Society: Series C*.
+- Degtiar, I. & Rose, S. (2023). A review of generalizability and transportability. *Annual Review of Statistics and Its Application*, 10, 501–524.
+- Moreno-Torres, J. G., Raeder, T., Alaiz-Rodríguez, R., Chawla, N. V. & Herrera, F. (2012). A unifying view on dataset shift in classification. *Pattern Recognition*, 45(1), 521–530.
+- Rao, J. N. K. & Molina, I. (2015). *Small Area Estimation* (2nd ed.). Wiley.

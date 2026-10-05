@@ -17,12 +17,12 @@ source("Sub_AoU_Fun.R")          # fun.sub.rails.threeway (+ AoU_Fun.R)
 
 my_bucket <- Sys.getenv("WORKSPACE_BUCKET")
 
-for (fname in c("dt_agg_pums_v2.csv", "dt_agg_aou_v2.csv", "aou_raking_dt.csv")) {
+for (fname in c("dt_agg_pums_v2.csv", "dt_agg_aou_v3.csv", "aou_raking_dt.csv")) {
   system(paste0("gsutil cp ", my_bucket, "/data/", fname, " ."), intern = TRUE)
 }
 
 dt_agg_pums <- read_csv("dt_agg_pums_v2.csv")
-dt_agg_aou  <- read_csv("dt_agg_aou_v2.csv")
+dt_agg_aou  <- read_csv("dt_agg_aou_v3.csv")
 dt_raw_aou  <- read_csv("aou_raking_dt.csv")
 
 ########################################################################
@@ -53,9 +53,9 @@ dt_agg_aou  <- harmonize_factors(dt_agg_aou)
 ## Individual-level AoU (original cleaning chain, for the final join)
 ########################################################################
 
-south     <- c("AL","AR","FL","GA","KY","LA","MS","NC","SC","TN","TX","VA","WV")
+south     <- c("AL","AR","DC","DE","FL","GA","KY","LA","MD","MS","NC","OK","SC","TN","TX","VA","WV")  # official Census (PUMS REGION): + DC, DE, MD, OK
 midwest   <- c("IL","IN","IA","KS","MI","MN","MO","NE","ND","OH","SD","WI")
-northeast <- c("CT","DE","ME","MD","MA","NH","NJ","NY","PA","RI","VT")
+northeast <- c("CT","ME","MA","NH","NJ","NY","PA","RI","VT")  # official Census: DE, MD moved to South
 west      <- c("AK","AZ","CA","CO","HI","ID","MT","NV","NM","OR","UT","WA","WY")
 state_region_map <- c(
   setNames(rep("South",     length(south)),     south),

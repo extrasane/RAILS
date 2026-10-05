@@ -1,0 +1,315 @@
+---
+title: "Transportability of RAILS Calibration Weights across Census Regions, Part 2"
+subtitle: "Phenotype prevalences and demographic associations without an external benchmark"
+author: "Huiding Chen"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    self_contained: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", out.width = "100%")
+fig <- function(f) knitr::include_graphics(file.path("figures", "part2", f))
+```
+
+<style>
+.caution { background: #f7f5ef; border-left: 4px solid #b58a00; padding: 0.6em 1em; margin: 1em 0; }
+.keypoint { background: #eef4fb; border-left: 4px solid #2a78d6; padding: 0.6em 1em; margin: 1em 0; }
+.pending { background: #fbeeee; border-left: 4px solid #d03b3b; padding: 0.6em 1em; margin: 1em 0; }
+table { font-size: 0.92em; }
+</style>
+
+# Summary {-}
+
+Part 1 used three eye conditions with external benchmarks (VEHSS). Because the VEHSS population and case definitions differ from those of All of Us (AoU), Part 2 moves to the panel of GBD-cause phenotypes analysed in the Subgroup RAILS application (`10_State_Prevalence_Maps.R`). No external benchmark is used.
+
+For each Census region $a$, the within-region, all-region and out-of-region AoU source samples were calibrated with RAILS to the same regional targets, yielding **S-RAILS**, **P-RAILS** and **T-RAILS**. The study then asks two questions:
+
+- **(A)** How much the choice of source sample changes phenotype **prevalences**.
+- **(B)** Whether the **associations** between phenotypes and demographic characteristics (log-odds ratios, $\beta$) are more stable across source samples than the prevalences themselves.
+
+<div class="keypoint">
+**Principal observations (preliminary; see §6 and §7):**
+
+1. **Prevalence differences by source sample are large and systematic.** The median ratio T-RAILS / S-RAILS across roughly 230 phenotypes is about 0.66 in the Northeast and 0.8 in the Midwest, but about 1.7 in the South and the West. Individual phenotypes range from about 1/8 to more than 4.
+2. **The direction of the transport contrast is almost entirely region-specific, not phenotype-specific.** T-RAILS exceeds S-RAILS for 7% of phenotypes in the Northeast, 16% in the Midwest, 96% in the South and 92% in the West. This reproduces, across the whole phenotype panel, the pattern observed for the eye conditions in Part 1.
+3. **The transport contrast tracks concept shift almost exactly for every phenotype.** Its magnitude is one to two orders larger than the manuscript's S-RAILS versus G-RAILS divergence.
+4. **Demographic associations are less sensitive to the source sample than prevalences, but are not invariant.** On the log-odds scale, the median absolute T − S difference is roughly 0.2 for $\beta$ against roughly 0.35–0.6 for prevalence. Age and sex associations agree reasonably well between sources; race/ethnicity associations, particularly Hispanic and "Others", agree poorly.
+5. **Tentative interpretation.** The sign pattern, which is common to almost all conditions and runs contrary to the known regional distribution of chronic disease (higher burden in the South), is more consistent with **regional differences in how conditions are recorded in AoU electronic health records** than with true regional differences in disease. The present analysis cannot establish this explanation.
+</div>
+
+<div class="pending">
+**Outputs not yet reviewed.** Two diagnostic outputs of `T02_Transport_Phenotypes_region.R` have not been inspected for this draft:
+- `transport2_srails_check.csv`: whether the within-region weights reproduce `w_subrails` of `09_Sub_RAILS_region.R`;
+- `transport2_weight_diag.csv` and `transport2_fit_log.csv`: effective sample sizes, weight variability, and the estimator used per region and source.
+
+The S-RAILS reproduction check in particular should be confirmed before these results are relied upon.
+</div>
+
+# Background, questions and relation to Part 1
+
+The notation follows the Subgroup RAILS manuscript and `DEFINITIONS.md`:
+
+| Symbol | Meaning |
+|---|---|
+| $\mathscr U^a$ | target population (adults 18+ in region $a$) |
+| $\mathscr U_A^a$, $\mathscr U_A$, $\mathscr U_A^{-a}$ | within-region, all-region and out-of-region AoU source samples |
+| $\boldsymbol T^{pop,a}$ | the region's PUMS margins |
+| $\Delta^a_j$ | T-RAILS − S-RAILS for phenotype $j$ (the transport contrast) |
+
+**Why an association can transport when a prevalence does not.** A prevalence transports only if the full outcome model $E[y_j \mid \boldsymbol x]$ is the same inside and outside the region (no concept shift). An association $\beta$, such as the adjusted log-odds ratio for age 75+ versus 45-64, transports under the weaker condition that the **effect** of the exposure does not differ by region (no effect modification). A region-wide shift in the baseline risk of recording a condition changes the intercept of the outcome model, but leaves $\beta$ unaffected.
+
+| # | Question | Comparison |
+|---|---|---|
+| A1 | How large are source-sample differences in prevalence? | T-RAILS and P-RAILS relative to S-RAILS, over ≈ 230 phenotypes |
+| A2 | Are they phenotype-specific or region-wide? | Sign consistency of $\Delta^a_j$ within each region |
+| A3 | Are they explained by concept shift? | $\Delta^a_j$ against the concept-shift proxy |
+| A4 | How do they compare with the manuscript's S- vs G-RAILS contrast? | $D_j$ and $E_j$ for S-T, S-P and S-G |
+| B1 | Do demographic associations agree between sources? | $\beta$(T-RAILS) against $\beta$(S-RAILS) |
+| B2 | Are associations more stable than prevalences? | Absolute T − S differences on the common log-odds scale |
+| B3 | How often do the associations differ beyond sampling error? | Share of phenotypes with $\lvert z \rvert > 1.96$ |
+
+# Data and methods
+
+## Data
+
+| Element | Definition |
+|---|---|
+| Target population $\mathscr U^a$ | Adults 18+ in region $a$; targets from the manuscript's PUMS cell file `dt_agg_pums_v2.csv` (2022 ACS 1-year) |
+| Calibration covariates $\boldsymbol X$ | Age group (18-24, 25-44, 45-64, 65-74, 75+), sex, education, home ownership, household income, race/ethnicity. Region is constant within the target and therefore excluded |
+| AoU sample $\mathscr U_A$ | The main-pipeline cohort (`aou_raking_dt.csv`), harmonized exactly as in `09_Sub_RAILS_region.R`; calibration cells from `dt_agg_aou_v2.csv` |
+| Region map | The pipeline map (DE and MD in the Northeast; OK and DC unmapped and excluded) |
+| Phenotypes $y_{ij}$ | GBD causes defined by ICD-9/10 codes on at least two distinct dates (`Build_Disease_Indicators.R`); sex-specific causes excluded using the list from the `_nosex` run of `10_State_Prevalence_Maps.R`. About 220–235 phenotypes pass the disclosure threshold per region |
+| Reference | G-RAILS (`w_rails`, the manuscript's global weights), averaged over $\mathscr U_A^a$ |
+
+## Estimation
+
+**Weights.** Each source sample was calibrated to $\boldsymbol T^{pop,a}$ with the RAILS procedure (three-way, with a two-way fallback). Because $\mathscr U_A^a$ calibrated to $\boldsymbol T^{pop,a}$ uses the same cells, targets and function as `09_Sub_RAILS_region.R`, the within-region weights should coincide with `w_subrails`.
+
+**Prevalence.** The Hájek estimator $\widehat\mu^a_j(\mathscr S)$, with a linearized standard error. Estimates based on fewer than 20 cases are suppressed.
+
+**Divergence.** $d^a_j$ is the Jensen–Shannon divergence between two Bernoulli prevalences in region $a$. Following the manuscript:
+- $D_j = \sum_a \rho_a d^a_j$;
+- $E_j$ is the normalized dispersion entropy of the regional contributions;
+- the leverage region is the region contributing at least half of $D_j$.
+
+Here region is the unit, so $L = 4$.
+
+**Concept-shift proxy.** $\sum_c N^a(c)\,[\widehat m_{-a}(c) - \widehat m_a(c)] / N^a$. The models $\widehat m_a$ and $\widehat m_{-a}$ are unweighted logistic models (main effects of $\boldsymbol X$), fitted to within- and out-of-region participants and averaged over the target's covariate distribution. A likelihood-ratio test (LRT) compares models with and without region-in/out × covariate interactions.
+
+**Associations.** Weighted logistic regressions with each source's weights:
+- **conditional:** phenotype ~ all six covariates;
+- **marginal:** phenotype ~ a single exposure.
+
+Reference levels are Female, age 45-64 and NH White. Standard errors are linearized sandwich estimates that account for weight variability but **not** for the estimation of the weights. A $\beta$ is suppressed when the exposure level or the reference level has fewer than 20 cases. Phenotypes with fewer than 100 cases in a source are not modelled.
+
+**Association contrast.** $\Delta\beta = \beta(\text{T-RAILS}) - \beta(\text{S-RAILS})$, with an approximate $z = \Delta\beta / \sqrt{se_T^2 + se_S^2}$. This is justified because the within- and out-of-region samples are disjoint.
+
+# Instructions for reproduction
+
+1. **Upload** `T02_Transport_Phenotypes_region.R`, `Sub_AoU_Fun.R` and `AoU_Fun.R` to one folder in the Subgroup workspace.
+2. **Inputs.** Place the inputs in the working directory or `../data/` (or set `FETCH_FROM_BUCKET <- TRUE`):
+   - `dt_agg_pums_v2.csv`, `dt_agg_aou_v2.csv`, `aou_raking_dt.csv`;
+   - `raking_wts_w_diseases_2_code_requirement.csv`;
+   - `dt_sub_aou_region.csv`, used for the reproduction check;
+   - `sex_specific_phenotypes_excluded_nosex.csv`.
+3. **Run** `source("T02_Transport_Phenotypes_region.R")`. With `SKIP_IF_CACHED <- TRUE`, the twelve calibrations are reused and only the analyses are repeated.
+4. **Outputs.** `../data/transport2_*.csv` and `../graph/transport2_fig*.png`. `transport2_cells.csv` contains cell counts and must remain in the Workbench.
+
+# Results
+
+**How to read the numbers.** Values quoted below are read from the figures and are approximate; exact values are in the `transport2_*.csv` files.
+
+## A1: magnitude of source-sample differences in prevalence (Figure 1)
+
+```{r}
+fig("fig1_prevalence_ratio_distribution.png")
+```
+
+**Figure 1.** Ratio of T-RAILS (green) and P-RAILS (orange) to S-RAILS for every phenotype, on a log2 scale. Boxes show the median and interquartile range across phenotypes.
+
+**T-RAILS / S-RAILS, median across phenotypes:**
+- about 0.66 in the Northeast;
+- about 0.8 in the Midwest;
+- about 1.7 in both the South and the West.
+
+**Spread.** The interquartile ranges are narrow relative to these shifts. For example, almost the entire interquartile range lies below 1 in the Northeast and above 1 in the South. Individual phenotypes nevertheless range from about 1/8 to more than 4.
+
+**P-RAILS** lies between S-RAILS and T-RAILS in every region, with medians of about 0.78, 0.86, 1.55 and 1.45. This is consistent with P-RAILS being approximately a mixture in which most of the calibrated weight falls on out-of-region participants.
+
+**Implication.** For a typical phenotype, replacing the within-region participants by out-of-region participants, calibrated to the same population margins, changes the estimated regional prevalence by roughly a third (Northeast) to more than two-thirds (South and West).
+
+## A2: direction of the transport contrast (Figure 2)
+
+```{r}
+fig("fig2_sign_consistency.png")
+```
+
+**Figure 2.** Percentage of phenotypes for which T-RAILS exceeds S-RAILS, by target region (number of phenotypes in parentheses).
+
+**The share of phenotypes with T-RAILS > S-RAILS:**
+
+| Region | Share | Phenotypes |
+|---|---|---|
+| Northeast | 7% | 234 |
+| Midwest | 16% | 235 |
+| South | 96% | 220 |
+| West | 92% | 231 |
+
+**Interpretation.** If source-sample differences were phenotype-specific, for example reflecting regional differences in particular diseases, these shares would be expected to lie closer to 50%. A share near 0% or 100% means that **nearly every condition** shifts in the same direction within a region. Equivalently, AoU participants in the Northeast and Midwest have systematically higher recorded prevalence, and those in the South and West systematically lower, than participants elsewhere with the same covariates.
+
+**Relation to Part 1.** This reproduces, across roughly 230 conditions, the pattern observed for AMD, glaucoma and cataract in Part 1: negative contrasts in the Midwest and (mostly) the Northeast, positive in the South and West.
+
+<div class="caution">
+**Caution.** The phenotypes are not independent. GBD aggregate causes contain their sub-causes, and many conditions share risk factors. The effective number of independent comparisons is therefore much smaller than 230, and the shares should be read descriptively rather than as a formal test.
+</div>
+
+## A3: concept shift (Figure 3)
+
+```{r}
+fig("fig3_contrast_vs_concept_shift.webp")
+```
+
+**Figure 3.** Transport contrast $\Delta^a_j$ (y-axis) against the concept-shift proxy (x-axis), one point per phenotype. Filled points indicate a significant LRT for region-in/out × covariate interactions.
+
+In all four regions the points lie very close to the identity line, and almost all LRTs are significant. The transport contrast is therefore almost entirely accounted for by differences in the outcome distribution *given* the covariates between within- and out-of-region participants, i.e. concept shift. It does not reflect residual differences in covariate composition, which calibration removes.
+
+<div class="caution">
+**Caution.** The contrast and the proxy are estimated from the same AoU data, so close agreement is partly expected by construction. The figure establishes the *nature* of the contrast, not which source sample is closer to the true prevalence.
+</div>
+
+## A4: comparison with the manuscript's S- vs G-RAILS divergence (Figure 4)
+
+```{r}
+fig("fig4_D_vs_E.webp")
+```
+
+**Figure 4.** $D_j$ (log scale) against $E_j$ for each phenotype and each pair of estimators. Colour and shape denote the leverage region (≥ 50% of $D_j$); open grey circles indicate that no region dominates.
+
+**Magnitude of $D_j$:**
+- S-RAILS vs G-RAILS (the manuscript's comparison): mostly between about $10^{-7}$ and $10^{-5}$;
+- S-RAILS vs T-RAILS and S-RAILS vs P-RAILS: mostly between about $10^{-5}$ and $10^{-2}$.
+
+**The choice of source sample therefore changes regional prevalence estimates by one to two orders of magnitude more than the choice between global and subgroup calibration of the same participants.**
+
+**Concentration.** For the source contrasts, $E_j$ is mostly high (0.6–1) and the largest values of $D_j$ are typically "spread", which is consistent with the region-wide shifts in A2. For S vs G, $E_j$ is lower and the leverage region is frequently the Midwest. With only four regions, $E_j$ takes few distinct values and should be read qualitatively.
+
+## B1: do demographic associations agree between sources? (Figure 5)
+
+```{r}
+fig("fig5_beta_T_vs_S.webp")
+```
+
+**Figure 5.** Conditional log-odds ratios estimated with T-RAILS (y-axis) against S-RAILS (x-axis), one point per phenotype × region, for each demographic term.
+
+| Term | Agreement between T-RAILS and S-RAILS |
+|---|---|
+| Age 25-44, 65-74, 75+ (vs 45-64) | Concentrated around the identity line; associations largely preserved |
+| Sex (Male vs Female) | Concentrated around the identity line; associations largely preserved |
+| Age 18-24 | Considerably more dispersed, with a tendency for T-RAILS to be lower; this likely reflects the small numbers of cases at young ages as well as genuine differences |
+| NH Asian, NH Black (vs NH White) | Correlated, but with substantial dispersion |
+| Hispanic, Others (vs NH White) | Little relationship between the two estimates |
+
+**Possible reasons for the poor agreement in race/ethnicity.** The composition of these categories differs markedly between regions (for example, in the national origins of Hispanic populations and in what "Others" comprises). Differences in health-system access may also differ between regions. Either would induce effect modification by region.
+
+## B2: are associations more stable than prevalences? (Figure 6)
+
+```{r}
+fig("fig6_prevalence_vs_beta_transport.png")
+```
+
+**Figure 6.** Absolute T − S differences on the log-odds scale (square-root axis): prevalence (grey), marginal $\beta$ (orange) and conditional $\beta$ (blue).
+
+**Medians.** The absolute difference in logit prevalence has medians of about 0.5 (Northeast), 0.35 (Midwest), 0.6 (South) and 0.6 (West). The corresponding medians for $\beta$ are about 0.2–0.25, with no material difference between marginal and conditional models. **On a common scale, associations therefore differ between sources by roughly half as much as prevalences.**
+
+**Two qualifications:**
+1. **Noise.** $\Delta\beta$ is estimated from contrasts between exposure levels, often with few cases, and contains more sampling noise than the prevalence contrast. The comparison is therefore, if anything, unfavourable to $\beta$, which strengthens the conclusion that associations are the more stable quantity.
+2. **Size.** A median difference of 0.2 in a log-odds ratio corresponds to a ratio of odds ratios of about 1.2. The upper tails of the $\beta$ distributions extend beyond 1–2. Associations are thus *more* transportable than prevalences, but not transportable without error.
+
+**Marginal vs conditional.** Their similarity is expected: calibration matches the covariate distribution, so adjusting for the same covariates in the outcome model changes little.
+
+## B3: how often do associations differ beyond sampling error? (Figure 7)
+
+```{r}
+fig("fig7_beta_contrast_significance.webp")
+```
+
+**Figure 7.** Share of phenotypes with $\lvert \Delta\beta \rvert / SE > 1.96$, by term and target region, for conditional and marginal models.
+
+If associations were identical across regions, about 5% of phenotypes would exceed the threshold by chance. The observed shares are well above 5% for almost every term and region (typically 15–40%). They are highest for:
+- age 18-24 in the South (73%) and Midwest (51%);
+- Hispanic in the Northeast and South (54–58%);
+- NH Black (50%) and sex (42%) in the West.
+
+The lowest shares are for NH Asian in the Midwest (6–7%) and age 65-74 in the South (5–9%).
+
+<div class="caution">
+**Caution.** The standard errors ignore the estimation of the calibration weights and are therefore too small. Inflated $z$-values would raise these shares even if associations were identical. The phenotypes are also correlated and no multiplicity adjustment is applied. The shares indicate that effect modification by region is common, but the exact proportions should not be interpreted until a bootstrap that propagates weight estimation is available.
+</div>
+
+# Overall interpretation
+
+**Prevalence.** The source sample is the dominant determinant of regional prevalence estimates in AoU. Calibration to identical population margins does not make within- and out-of-region participants interchangeable: their recorded outcome rates differ substantially given the same covariates (concept shift).
+
+**Region-wide direction.** The direction of this difference is common to nearly all conditions within a region. A region-specific factor acting on the recording of conditions, rather than on particular diseases, is the most parsimonious explanation consistent with these data. Candidates include differences in EHR completeness, in the type of participating health systems, and in coding practice.
+
+**Tension with known epidemiology.** Higher recorded prevalence in the Northeast and Midwest, and lower in the South, runs contrary to the well-documented higher burden of many chronic conditions in the South. That tension further supports an ascertainment interpretation, but it does not constitute proof.
+
+**Associations.** Demographic associations are substantially more stable across source samples than prevalences, consistent with a region-level shift that acts mainly on baseline risk. They are not invariant, however:
+- age and sex associations transport reasonably well;
+- race/ethnicity associations do not.
+
+**Viability of association-based transport assessment.** Comparing $\beta$ across source samples is a viable and informative complement to comparing prevalences. It separates a shift in baseline risk (which affects prevalence only) from effect modification (which affects $\beta$). To be used inferentially, it requires:
+1. variance estimation that includes the calibration step;
+2. a multiplicity framework that respects the hierarchical, correlated structure of the GBD phenotypes;
+3. exposure-specific interpretation, because transportability evidently differs between age/sex and race/ethnicity.
+
+**Relation to the manuscript.** The S- versus G-RAILS comparison of the manuscript holds the participants fixed and varies the calibration. Here the calibration target is fixed and the participants vary. The latter contrast is one to two orders of magnitude larger ($D_j$, Figure 4), which indicates that conclusions about regional prevalence in AoU depend more on *whose* data are used than on *how* they are weighted.
+
+# Limitations
+
+1. **No external benchmark.** All comparisons are between estimators. The results show that the source sample matters and why (concept shift). They do not show which source is correct.
+2. **Inference.** Prevalence CIs and $\beta$ standard errors ignore the estimation of the calibration weights; the $z$-based shares in Figure 7 are therefore likely overstated. No uncertainty is attached to $D_j$.
+3. **Dependence among phenotypes.** GBD aggregates contain their sub-causes, and conditions share risk factors. Counts and shares across phenotypes are descriptive.
+4. **Concept-shift proxy.** It is computed from the same data as the contrast, using main-effects models only.
+5. **Small strata.** Associations for sparse levels (age 18-24, "Others") are unstable. Suppression rules remove the sparsest cases but not all of the instability.
+6. **Ascertainment hypothesis.** Not tested; it requires a measure of EHR depth or completeness.
+7. **Design choices.**
+   - The region map follows the pipeline (DE and MD in the Northeast; OK and DC excluded).
+   - The targets come from the aggregated PUMS cell file, whose within-region joint distributions should be verified (see the Subgroup RAILS README).
+   - The preprocessing issues listed in Part 1, Appendix A, also apply.
+8. **Unreviewed checks.** The S-RAILS reproduction check and the weight diagnostics have not yet been reviewed for this draft.
+
+# Next steps
+
+1. **Review the S-RAILS reproduction check** (`transport2_srails_check.csv`) and the weight diagnostics; report the effective sample sizes per region and source.
+2. **Bootstrap.** Resample participants within each source and rerun the full RAILS procedure, to obtain valid intervals for $\Delta^a_j$, $D_j$ and $\Delta\beta$.
+3. **Test the ascertainment hypothesis.** Construct an EHR-depth measure (e.g. years with recorded encounters, number of visits, or data-contributing site type). Then:
+   - compare its distribution across regions;
+   - include it in $\boldsymbol X$, or stratify on it, to assess whether the region-wide shift in Figure 2 is attenuated.
+4. **Model the shift directly.** Fit a hierarchical model across phenotypes with a region-level random intercept and phenotype-specific deviations. This separates the common regional shift from phenotype-specific heterogeneity.
+5. **Extend the associations** to clinically motivated phenotype pairs (e.g. diabetes and chronic kidney disease), where effect modification by region is of substantive interest.
+
+# Appendix. Output files {-}
+
+| File | Content |
+|---|---|
+| `transport2_fit_log.csv` | Estimator and selected / calibrated terms per region × source |
+| `transport2_srails_check.csv` | Within-region weights vs `w_subrails` (maximum and median relative difference, correlation) |
+| `transport2_weight_diag.csv` | n, ESS, weight CV per region × source |
+| `transport2_prevalence.csv` | Prevalence and SE per region × source × method × phenotype, plus G-RAILS |
+| `transport2_contrasts.csv` | S, P, T, G per region × phenotype; differences, ratios, logit differences, JS divergences |
+| `transport2_DE.csv` | $D_j$, $E_j$ and leverage region for S-T, S-P and S-G |
+| `transport2_sign_consistency.csv` | Share of phenotypes with T-RAILS > S-RAILS per region |
+| `transport2_concept_shift.csv` | Concept-shift proxy and LRT per region × phenotype |
+| `transport2_beta.csv` | $\beta$ and SE per region × source × weighting × model × phenotype × term |
+| `transport2_beta_contrasts.csv` | $\Delta\beta$ (T − S, P − S), $z$, and the logit prevalence contrast |
+| `transport2_beta_summary.csv` | Median absolute contrasts and share of $\lvert z\rvert > 1.96$ by model × term × region |
+| `transport2_cells.csv` | Cell-level weights (contains small counts; remains in the Workbench) |

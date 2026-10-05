@@ -22,7 +22,7 @@
 ####                                  has_BRCA1, has_BRCA2, has_BreastCancer_FH_any,
 ####                                  Race_simplified, Age, ..., w)
 ####   global_rails_weights.csv      (person_id, w_rails)
-####   dt_sub_aou_femaleonly.csv     (person_id, w_subrails)   [by-sex sub-RAILS]
+####   dt_sub_aou_sex_female.csv     (person_id, w_subrails)   [by-sex sub-RAILS]
 #### Outputs (../graph/):
 ####   km_three_schemes_row.png       KM panels, one per scheme (strata)
 ####   cuminc_three_schemes_row.png   cumulative-risk panels (1 - S), same strata
@@ -74,7 +74,7 @@ global_wts <- read_csv("../data/global_rails_weights.csv",
                        col_select = c(person_id, w_rails), show_col_types = FALSE) %>%
   distinct(person_id, .keep_all = TRUE)
 
-sub_wts <- read_csv("../data/dt_sub_aou_femaleonly.csv",
+sub_wts <- read_csv("../data/dt_sub_aou_sex_female.csv",
                     col_select = c(person_id, w_subrails), show_col_types = FALSE) %>%
   distinct(person_id, .keep_all = TRUE)
 
