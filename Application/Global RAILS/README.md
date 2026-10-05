@@ -37,7 +37,7 @@ Subgroup RAILS analysis continues the sequence at step 9 (see
 | Step | Where to run | Script | Output |
 |---|---|---|---|
 | 1. Prepare PUMS data | Local or any R environment | `01_PUMS_Prep.R` | `dt_agg_pums_v2.csv` |
-| 2. Prepare AoU data | AoU Workbench | `02_AoU_Prep.R` | `aou_raking_dt.csv`, `dt_agg_aou_v3.csv` |
+| 2. Prepare AoU data | AoU Workbench | `02_AoU_Prep.R` | `aou_raking_dt.csv`, `dt_agg_aou_v2.csv` |
 | 3. Prepare NHIS data *(hybrid design only)* | Local or any R environment | `03_NHIS_Prep.R` | `dt_agg_nhis_v2.csv` |
 | 4. Run Global RAILS | AoU Workbench | `04_Global_RAILS.R` | `global_rails_weights.csv` — weights per participant |
 | 5. Prevalence analysis | AoU Workbench | `05_Prevalence_Analysis.R` | Prevalence tables + national/region figures |

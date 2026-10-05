@@ -83,7 +83,7 @@ dir.create(GRAPH_DIR, showWarnings = FALSE, recursive = TRUE)
 
 ## Inputs (looked up in the working directory first, then DATA_DIR)
 F_PUMS_AGG <- "dt_agg_pums_v2.csv"                          # PUMS cells, 7 covariates (manuscript targets)
-F_AOU_AGG  <- "dt_agg_aou_v3.csv"                           # AoU cells, 7 covariates
+F_AOU_AGG  <- "dt_agg_aou_v2.csv"                           # AoU cells, 7 covariates
 F_AOU_RAW  <- "aou_raking_dt.csv"                           # AoU individuals (person_id + covariates)
 F_DISEASE  <- "raking_wts_w_diseases_2_code_requirement.csv" # person_id, state, region, w_rails, phenotypes
 F_SUBW     <- "dt_sub_aou_region.csv"                       # person_id, w_subrails (09), for the check

@@ -107,7 +107,7 @@ Variables are recoded to match the PUMS categories exactly. Age is computed as o
 
 State of residence is extracted from the `PII State: XX` string format. `pivot_wider(values_fn = first)` guards against participants with multiple answers to the same question.
 
-**Outputs:** `aou_raking_dt.csv` (individual level) and `dt_agg_aou_v3.csv` (aggregated cells).
+**Outputs:** `aou_raking_dt.csv` (individual level) and `dt_agg_aou_v2.csv` (aggregated cells).
 
 ---
 
@@ -137,6 +137,6 @@ result_hybrid <- fun.rails.threeway(
 |---|---|---|
 | `dt_agg_pums_v2.csv` | Step 1 | RAILS Procedure |
 | `aou_raking_dt.csv` | Step 2 | RAILS Procedure (individual-level join) |
-| `dt_agg_aou_v3.csv` | Step 2 | RAILS Procedure |
+| `dt_agg_aou_v2.csv` | Step 2 | RAILS Procedure |
 | `NHIS_2020.csv` | Step 3 | Hybrid-design analyses |
 | `dt_agg_nhis_v2.csv` | Step 3 | RAILS Procedure (hybrid design only) |

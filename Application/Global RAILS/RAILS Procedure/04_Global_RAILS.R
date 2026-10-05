@@ -13,12 +13,12 @@ source("AoU_Fun.R")
 
 my_bucket <- Sys.getenv("WORKSPACE_BUCKET")
 
-for (fname in c("dt_agg_pums_v2.csv", "dt_agg_aou_v3.csv", "aou_raking_dt.csv")) {
+for (fname in c("dt_agg_pums_v2.csv", "dt_agg_aou_v2.csv", "aou_raking_dt.csv")) {
   system(paste0("gsutil cp ", my_bucket, "/data/", fname, " ."), intern = TRUE)
 }
 
 dt_agg_pums <- read_csv("dt_agg_pums_v2.csv")
-dt_agg_aou  <- read_csv("dt_agg_aou_v3.csv")
+dt_agg_aou  <- read_csv("dt_agg_aou_v2.csv")
 dt_raw_aou  <- read_csv("aou_raking_dt.csv")
 
 ########################################################################

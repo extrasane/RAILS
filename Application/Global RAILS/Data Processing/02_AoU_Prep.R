@@ -285,8 +285,8 @@ library(survey)
 # cat_formula  <- formula(paste0("weight ~", paste(names_univar, collapse = "+")))
 # dt_agg_aou   <- aggregate(cat_formula, data = dt_aou, sum)
 #
-# write_excel_csv(dt_agg_aou, "dt_agg_aou_v3.csv")
-# system(paste0("gsutil cp ./dt_agg_aou_v3.csv ", my_bucket, "/data/"), intern = TRUE)
+# write_excel_csv(dt_agg_aou, "dt_agg_aou_v2.csv")
+# system(paste0("gsutil cp ./dt_agg_aou_v2.csv ", my_bucket, "/data/"), intern = TRUE)
 # system(paste0("gsutil ls ", my_bucket, "/data/*.csv"), intern = TRUE)
 
 
@@ -717,7 +717,7 @@ dt_agg_aou   <- aggregate(cat_formula, data = dt_aou, sum)
 
 write_excel_csv(dt00, "aou_raking_dt.csv")
 write_excel_csv(dt_aou, "dt_aou_individual_v3.csv")
-write_excel_csv(dt_agg_aou, "dt_agg_aou_v3.csv")
+write_excel_csv(dt_agg_aou, "dt_agg_aou_v2.csv")
 
 copy_to_gcs_if_requested <- function(files) {
   if (!is_nonempty(OUTPUT_BUCKET_RESOURCE_ID)) {
@@ -738,10 +738,10 @@ copy_to_gcs_if_requested <- function(files) {
   invisible(NULL)
 }
 
-copy_to_gcs_if_requested(c("aou_raking_dt.csv", "dt_aou_individual_v3.csv", "dt_agg_aou_v3.csv"))
+copy_to_gcs_if_requested(c("aou_raking_dt.csv", "dt_aou_individual_v3.csv", "dt_agg_aou_v2.csv"))
 
 message("Done.")
 message("Local outputs:")
 message("  - aou_raking_dt.csv")
 message("  - dt_aou_individual_v3.csv")
-message("  - dt_agg_aou_v3.csv")
+message("  - dt_agg_aou_v2.csv")
